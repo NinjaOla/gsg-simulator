@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!--
+      Relax analyzer rules that conflict with standard xUnit conventions:
+        CA1707    - test method names use Method_Condition_Result underscores
+        CA1861    - inline [] expected values are idiomatic in tests
+        CA1859    - concrete return types don't matter for test helpers
+        CA2007    - ConfigureAwait not needed in xUnit tests
+        xUnit1051 - we pass explicit CancellationTokens in cancellation tests
+    -->
+    <NoWarn>$(NoWarn);CA1707;CA1861;CA1859;CA2007;xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SimEngine\SimEngine.csproj" />
+  </ItemGroup>
+</Project>

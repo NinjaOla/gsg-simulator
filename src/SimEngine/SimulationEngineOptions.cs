@@ -1,0 +1,21 @@
+namespace SimEngine;
+
+/// <summary>Construction-time options for a <see cref="SimulationEngine"/>.</summary>
+public sealed class SimulationEngineOptions
+{
+    public required DateTimeOffset StartDate { get; init; }
+
+    public required ulong Seed { get; init; }
+
+    /// <summary>Default delta applied by the parameterless <c>Step()</c>.</summary>
+    public TimeSpan DefaultTickDelta { get; init; } = TimeSpan.FromDays(1);
+
+    /// <summary>When true, systems in the same batch run concurrently.</summary>
+    public bool EnableParallelBatches { get; init; } = true;
+
+    /// <summary>
+    /// Upper bound on batch parallelism. <c>null</c> means
+    /// <see cref="Environment.ProcessorCount"/>.
+    /// </summary>
+    public int? MaxDegreeOfParallelism { get; init; }
+}
