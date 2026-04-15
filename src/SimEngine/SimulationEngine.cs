@@ -1,5 +1,6 @@
 using SimEngine.Events;
 using SimEngine.Random;
+using SimEngine.State;
 using SimEngine.Systems;
 using SimEngine.Time;
 
@@ -18,6 +19,7 @@ public sealed class SimulationEngine
     private readonly SimulationTimeProvider _time;
     private readonly Xoshiro256StarStar _random;
     private readonly DeferredEventBus _events;
+    private readonly SimulationState _state;
     private readonly Dictionary<string, Xoshiro256StarStar> _systemRandoms;
     private long _tickNumber;
 
@@ -30,6 +32,7 @@ public sealed class SimulationEngine
         _time = new SimulationTimeProvider(options.StartDate);
         _random = new Xoshiro256StarStar(options.Seed);
         _events = new DeferredEventBus();
+        _state = options.InitialState ?? new SimulationState();
 
         var systemList = systems.ToArray();
         _graph = SystemDependencyGraph.Build(systemList);
@@ -52,6 +55,8 @@ public sealed class SimulationEngine
     public IDeterministicRandom Random => _random;
 
     public IEventBus Events => _events;
+
+    public SimulationState State => _state;
 
     public long TickNumber => _tickNumber;
 
@@ -153,6 +158,7 @@ public sealed class SimulationEngine
             Time = _time,
             Random = _systemRandoms[system.Name],
             Events = _events,
+            State = _state,
             TickNumber = _tickNumber,
             TickStart = tickStart,
             TickEnd = tickEnd,

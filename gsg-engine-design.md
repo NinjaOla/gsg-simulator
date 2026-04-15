@@ -70,9 +70,11 @@ The tick boundary is a hard synchronization barrier — all systems must complet
 
 ### Entity Model
 
-The engine provides a component-based entity store. Provinces have components attached. Free-standing entities (countries, armies, wars, trade routes) have components attached. Entities have typed relationships to each other via a labeled directed graph ("province --owner--> country").
+The engine provides a unified component-based entity store. **Everything is an entity** — provinces, countries, armies, wars, trade routes. A province is just an entity with a `ProvinceComponent` attached; there is no separate "province collection." Entity relationships (e.g., `province --Owns--> country`) live in a labeled directed graph keyed by `EntityId`.
 
-The engine knows about GSG domain types but starts with minimal implementations. Components are plain C# types — no ECS framework.
+Component storage is typed-per-component: one `Dictionary<EntityId, T>` per component type, paired with a `SortedSet<EntityId>` mirror for deterministic ascending iteration. Components are value types (`struct`) so aliasing is impossible and snapshotting is trivial. No ECS framework — plain C#.
+
+`ProvinceId` remains a strongly-typed marker, but by convention its `.Value` matches the underlying `EntityId.Value` of the province entity it refers to. This keeps pathfinding and adjacency APIs type-clear while letting them share a single id space.
 
 ### World Loading
 
@@ -82,7 +84,7 @@ Mods provide their own GeoJSON files — the engine doesn't care whether the wor
 
 ### Pathfinding
 
-The engine provides A* on the province adjacency graph. The cost function is pluggable — the game defines movement costs.
+The engine provides A* on the province adjacency graph. The cost function is pluggable — the game defines movement costs. Costs are integer (no floats in search state), and the open set is keyed by `(F, G, ProvinceId.Value)` so equal-cost ties resolve deterministically. The heuristic is optional; passing `null` degrades A* to Dijkstra, which Phase 1a ships with. A fixed-point great-circle heuristic is a Phase 1b option if profiling shows it's worth the arithmetic.
 
 ### Save/Load
 
@@ -133,14 +135,33 @@ The skeleton everything else builds on.
 
 ### Phase 1 — World & State
 
-The map and things on it.
+The map and things on it. Split into two ships to keep the state model decoupled from the geometry library decision.
 
-- World loading — abstracted behind `IWorldLoader` interface, GeoJSON as one implementation (geometry library TBD)
-- `Province` — id, name, geometry as coordinate arrays, centroid, extensible properties
-- `AdjacencyGraph` — built by loader, A* pathfinding with pluggable cost function
-- 3D projection — lat/lon to sphere coordinates
-- `SimulationState` — component bags on provinces, entity store with components
-- Entity relationships — labeled directed graph for entity-to-entity links
+#### Phase 1a — State layer (done)
+
+The in-memory model, with zero new dependencies. Tests use a programmatic `WorldBuilder` to construct synthetic worlds, so none of 1a depends on a real GeoJSON loader.
+
+- **Unified entity store.** Provinces are entities — not a parallel collection. `EntityStore` holds typed per-component stores (`ComponentStore<T>` backed by `Dictionary<EntityId, T>` for ref access via `CollectionsMarshal`, plus a mirrored `SortedSet<EntityId>` for deterministic ascending iteration). Components are structs. `ProvinceId` is a strongly-typed marker whose `.Value` matches the underlying `EntityId.Value` for any province entity.
+- **`ProvinceComponent`** — name, `Terrain` enum (Land/Sea modeled from the start), centroid as signed int microdegrees. No floats in game state. Neighbors live in `AdjacencyGraph`, not on the component — single source of truth.
+- **`AdjacencyGraph`** — `FrozenDictionary<ProvinceId, ImmutableArray<ProvinceId>>`, immutable after build. Handles sparse `ProvinceId` values; neighbors within each entry are sorted ascending so iteration is deterministic.
+- **`AStarPathfinder`** — integer-only Dijkstra with optional admissible heuristic. `SortedSet` open set keyed by `(F, G, ProvinceId.Value)` so equal-cost paths resolve deterministically across 100+ repeated runs.
+- **`RelationshipGraph`** — labeled directed multigraph of entity relationships. `SortedDictionary<(EntityId, RelationshipLabel), SortedSet<EntityId>>` outbound + mirrored inbound index for O(log n) reverse lookups. `RelationshipLabel` is an enum (engine reserves 0–999; game code starts at 1000).
+- **`SimulationState`** — root container holding `EntityStore`, `RelationshipGraph`, and `AdjacencyGraph`. Threaded into `SimulationContext` as an `init` property so systems access it via `ctx.State`. `SimulationEngineOptions.InitialState` lets callers hand a pre-built state to the engine.
+- **`WorldBuilder`** — programmatic world construction used by tests, procedural games, and (in 1b) as the canonical "seeds → state" routine invoked by loaders.
+- **`SphereProjection`** — lat/lon to unit-sphere helper. Uses `double` intentionally: renderer-only, never fed back into game state, never participates in determinism-sensitive math.
+- **`IWorldLoader`** — interface + `ProvinceSeed` + `WorldLoadResult` shipped as a stub. Concrete implementation deferred to 1b.
+- **State keys** — `CoreStateKeys` (`state/entities`, `state/relationships`, `state/adjacency`) and `ComponentStateKeys.Of<T>()` generic helper that caches per closed generic. Systems declare reads/writes via these so the Phase 0 dependency scheduler stays unchanged.
+
+#### Phase 1b — Real world loader
+
+The geometry library decision and the GeoJSON pipeline. Gated on the state layer so we can commit to a library without churning the state model.
+
+- **Geometry library decision** — likely NetTopologySuite (BSD-3, STRtree for fast adjacency, `NetTopologySuite.IO.GeoJSON` for loading). Alternative: lightweight hand-rolled `System.Text.Json` parser + segment-hash adjacency. Decision gated on dependency-surface tolerance.
+- **`GeoJsonWorldLoader`** — `IWorldLoader` implementation. Parses a `FeatureCollection`, extracts polygon geometries, emits `ProvinceSeed` records with centroids computed in microdegrees.
+- **Adjacency-from-shared-edges** — spatial index (STRtree) candidate pairs + boundary intersection test, or normalized edge hashmap. Natural Earth topology quirks (non-watertight polygons, sliver triangles) handled with tolerance + validation pass.
+- **Natural Earth integration test** — load `ne_10m_admin_1_states_provinces` end-to-end, assert reasonable province count and adjacency degree distribution. Regression gate on the loader.
+- **Determinism boundary** — NTS uses `double` internally. Derived values (adjacency lists, integer-scaled centroids) baked into game state at load time; NTS types never cross the state boundary.
+- **(Optional)** Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling real A* over continent-scale maps. Deferred if Dijkstra remains fast enough in practice.
 
 ### Phase 2 — Save/Load
 
