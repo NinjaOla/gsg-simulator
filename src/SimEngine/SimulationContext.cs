@@ -1,5 +1,6 @@
 using SimEngine.Events;
 using SimEngine.Random;
+using SimEngine.State;
 using SimEngine.Time;
 
 namespace SimEngine;
@@ -21,6 +22,14 @@ public readonly struct SimulationContext
     public IDeterministicRandom Random { get; init; }
 
     public IEventBus Events { get; init; }
+
+    /// <summary>
+    /// Mutable world state — entity/component store, relationships, and the
+    /// province adjacency graph. Shared across every system in the tick, so
+    /// systems must use their declared read/write state keys to stay
+    /// cooperative under parallel batching.
+    /// </summary>
+    public SimulationState State { get; init; }
 
     public long TickNumber { get; init; }
 

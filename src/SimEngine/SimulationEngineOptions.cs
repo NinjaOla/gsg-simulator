@@ -1,3 +1,5 @@
+using SimEngine.State;
+
 namespace SimEngine;
 
 /// <summary>Construction-time options for a <see cref="SimulationEngine"/>.</summary>
@@ -18,4 +20,12 @@ public sealed class SimulationEngineOptions
     /// <see cref="Environment.ProcessorCount"/>.
     /// </summary>
     public int? MaxDegreeOfParallelism { get; init; }
+
+    /// <summary>
+    /// Optional pre-built state. When non-null, the engine takes ownership
+    /// of the passed instance (including its entities, relationships, and
+    /// adjacency graph) instead of constructing an empty one. Typical flow:
+    /// build a world with <see cref="WorldBuilder"/>, pass the result here.
+    /// </summary>
+    public SimulationState? InitialState { get; init; }
 }
