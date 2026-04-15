@@ -122,7 +122,7 @@ Data mods via JSON files (world overrides, starting state, events). Code mods vi
 
 The skeleton everything else builds on.
 
-- Solution structure: `SimEngine` class library + `SimEngine.Tests`
+- Solution structure: `SimEngine.slnx` containing the `SimEngine` class library + `SimEngine.Tests`
 - `SimulationTimeProvider` wrapping `TimeProvider` with advance methods
 - `SimulationEngine` — the tick loop, system registration, cadence scheduling
 - `ISimulationSystem` interface — cadence, execution order, read/write declarations
