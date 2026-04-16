@@ -8,5 +8,7 @@
     <PackageVersion Include="xunit.v3" Version="1.0.1" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.0.1" />
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+    <PackageVersion Include="NetTopologySuite" Version="2.6.0" />
+    <PackageVersion Include="NetTopologySuite.IO.GeoJSON" Version="4.0.0" />
   </ItemGroup>
 </Project>

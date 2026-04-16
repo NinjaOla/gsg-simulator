@@ -22,4 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SimEngine\SimEngine.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="TestAssets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
