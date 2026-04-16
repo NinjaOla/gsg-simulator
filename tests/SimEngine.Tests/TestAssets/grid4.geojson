@@ -1,0 +1,37 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "A", "adm1_code": "A1" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,1],[1,1],[1,2],[0,2],[0,1]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "B", "adm1_code": "B1" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[1,1],[2,1],[2,2],[1,2],[1,1]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "C", "adm1_code": "C1" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "D", "adm1_code": "D1" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[1,0],[2,0],[2,1],[1,1],[1,0]]]
+      }
+    }
+  ]
+}

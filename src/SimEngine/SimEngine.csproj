@@ -7,4 +7,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SimEngine.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NetTopologySuite" />
+    <PackageReference Include="NetTopologySuite.IO.GeoJSON" />
+  </ItemGroup>
 </Project>
