@@ -78,13 +78,13 @@ Component storage is typed-per-component: one `Dictionary<EntityId, T>` per comp
 
 ### World Loading
 
-World data (provinces, adjacency) is loaded at runtime from GeoJSON to support modded worlds. The loader is abstracted behind an interface — the specific geometry library is not yet decided. Adjacency is derived from shared polygon edges. Coordinates are lat/lon projected to 3D sphere for renderer consumption.
+World data (provinces, adjacency) is loaded at runtime from GeoJSON to support modded worlds. The loader is abstracted behind `IWorldLoader`; the concrete implementation uses **NetTopologySuite 2.6.0** (BSD-3). Adjacency is derived from a snapped-segment hash (1e-7° grid) rather than NTS `Touches`, because Natural Earth polygons are not watertight and `Touches` systematically misses real borders. Coordinates are lat/lon projected to a 3D unit sphere for renderer consumption via `SphereProjection`.
 
 Mods provide their own GeoJSON files — the engine doesn't care whether the world is Earth or fantasy.
 
 ### Pathfinding
 
-The engine provides A* on the province adjacency graph. The cost function is pluggable — the game defines movement costs. Costs are integer (no floats in search state), and the open set is keyed by `(F, G, ProvinceId.Value)` so equal-cost ties resolve deterministically. The heuristic is optional; passing `null` degrades A* to Dijkstra, which Phase 1a ships with. A fixed-point great-circle heuristic is a Phase 1b option if profiling shows it's worth the arithmetic.
+The engine provides A* on the province adjacency graph. The cost function is pluggable — the game defines movement costs. Costs are integer (no floats in search state), and the open set is keyed by `(F, G, ProvinceId.Value)` so equal-cost ties resolve deterministically. The heuristic is optional; passing `null` degrades A* to Dijkstra, which is what ships today. A fixed-point great-circle heuristic using the `CentroidLatE6`/`CentroidLonE6` fields populated by the loader is planned for Phase 1c — deferred until per-edge movement costs exist so admissibility can be verified.
 
 ### Save/Load
 
@@ -120,7 +120,7 @@ Data mods via JSON files (world overrides, starting state, events). Code mods vi
 
 ## Phase Plan
 
-### Phase 0 — Foundation
+### Phase 0 — Foundation ✅
 
 The skeleton everything else builds on.
 
@@ -130,14 +130,14 @@ The skeleton everything else builds on.
 - `ISimulationSystem` interface — cadence, execution order, read/write declarations
 - System dependency graph — topological sort at startup, parallel batch execution
 - `IEventBus` — publish/subscribe for cross-system communication
-- Deterministic seeded PRNG
+- Deterministic seeded PRNG (`Xoshiro256**` with `decimal` output, no `float`/`double` in game state)
 - Strongly-typed IDs (`ProvinceId`, `CountryId`, `EntityId` as `readonly record struct`)
 
 ### Phase 1 — World & State
 
-The map and things on it. Split into two ships to keep the state model decoupled from the geometry library decision.
+The map and things on it. Split into three ships to keep the state model decoupled from the geometry library decision, and the loader decoupled from pathfinding optimisation.
 
-#### Phase 1a — State layer (done)
+#### Phase 1a — State layer ✅
 
 The in-memory model, with zero new dependencies. Tests use a programmatic `WorldBuilder` to construct synthetic worlds, so none of 1a depends on a real GeoJSON loader.
 
@@ -152,16 +152,26 @@ The in-memory model, with zero new dependencies. Tests use a programmatic `World
 - **`IWorldLoader`** — interface + `ProvinceSeed` + `WorldLoadResult` shipped as a stub. Concrete implementation deferred to 1b.
 - **State keys** — `CoreStateKeys` (`state/entities`, `state/relationships`, `state/adjacency`) and `ComponentStateKeys.Of<T>()` generic helper that caches per closed generic. Systems declare reads/writes via these so the Phase 0 dependency scheduler stays unchanged.
 
-#### Phase 1b — Real world loader
+#### Phase 1b — Real world loader ✅
 
-The geometry library decision and the GeoJSON pipeline. Gated on the state layer so we can commit to a library without churning the state model.
+The geometry library decision and the GeoJSON pipeline. Gated on the state layer so we could commit to a library without churning the state model.
 
-- **Geometry library decision** — likely NetTopologySuite (BSD-3, STRtree for fast adjacency, `NetTopologySuite.IO.GeoJSON` for loading). Alternative: lightweight hand-rolled `System.Text.Json` parser + segment-hash adjacency. Decision gated on dependency-surface tolerance.
-- **`GeoJsonWorldLoader`** — `IWorldLoader` implementation. Parses a `FeatureCollection`, extracts polygon geometries, emits `ProvinceSeed` records with centroids computed in microdegrees.
-- **Adjacency-from-shared-edges** — spatial index (STRtree) candidate pairs + boundary intersection test, or normalized edge hashmap. Natural Earth topology quirks (non-watertight polygons, sliver triangles) handled with tolerance + validation pass.
-- **Natural Earth integration test** — load `ne_10m_admin_1_states_provinces` end-to-end, assert reasonable province count and adjacency degree distribution. Regression gate on the loader.
-- **Determinism boundary** — NTS uses `double` internally. Derived values (adjacency lists, integer-scaled centroids) baked into game state at load time; NTS types never cross the state boundary.
-- **(Optional)** Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling real A* over continent-scale maps. Deferred if Dijkstra remains fast enough in practice.
+- **Geometry library**: **NetTopologySuite 2.6.0** + `NetTopologySuite.IO.GeoJSON 4.0.0` (BSD-3). Added to `Directory.Packages.props`; central package management keeps versions pinned.
+- **`GeoJsonWorldLoader`** — `IWorldLoader` implementation under `State/Loading/GeoJson/`. Reads a GeoJSON `FeatureCollection` in file order, resolves province names via a `name → name_en → name_alt → adm1_code` fallback chain, computes centroids with NTS and quantizes to `int` microdegrees with `MidpointRounding.ToEven`.
+- **Adjacency-from-shared-edges** — `SharedEdgeAdjacencyBuilder` uses a snapped-segment hash (1e-7° grid, `~1 cm`). NTS `Touches` was rejected because Natural Earth is not watertight; the hash approach correctly connects provinces whose border coordinates differ by a few units in the 7th decimal place. A T-junction pre-pass handles the case where one polygon has a mid-edge vertex that the neighbour doesn't. Three-way segment collisions (data quirks) deterministically pick the first two owners.
+- **`WorldLoaders`** — composition helper (`LoadIntoState`) that drives the seed → `WorldBuilder` → `SimulationState` pipeline, replaying adjacency edges in a canonical `ProvinceId 1..N, b > a` order so the result is byte-identical across runs regardless of `FrozenDictionary` enumeration order.
+- **Determinism boundary** — NTS `double` math stays inside the loader; only `int` microdegrees and `(ProvinceId, ProvinceId)` edges cross into game state.
+- **Test assets** — `tests/SimEngine.Tests/TestAssets/grid4.geojson` (handcrafted 2×2 grid) and `germany_admin1.geojson` (16 Bundesländer curated from Natural Earth, ~311 KB). Integration test asserts ≥ 10 internal borders, mean degree 2–7, and byte-identical determinism on repeated loads. Reproduction command documented in `TestAssets/README.md`.
+- **Terrain** — every loaded province is `Terrain.Land`. Sea provinces come from a separate dataset (future phase).
+
+#### Phase 1c — A* heuristic
+
+Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling true A* on continent-scale maps rather than Dijkstra.
+
+- **Admissibility constraint** — the heuristic must never overestimate *any* edge cost. Admissibility analysis is deferred until per-edge movement costs exist (Phase 4 — Military). Shipping the heuristic before costs are defined would risk silently non-optimal paths.
+- **Integer formulation** — compute approximate great-circle distance from centroid microdegrees stored on `ProvinceComponent`. Use fixed-point arithmetic (no `double` in pathfinding state); scale to the same unit as edge weights.
+- **`HaversineHeuristic`** — a static helper implementing `PathfindingDelegates.Heuristic`. Callers opt in by passing it to `AStarPathfinder.FindPath`; `null` continues to give Dijkstra.
+- **Benchmark** — a `SimEngine.Benchmarks` project (BenchmarkDotNet) showing Dijkstra vs. A* on a full 4 500-province world graph. Gate on performance before committing to the heuristic complexity.
 
 ### Phase 2 — Save/Load
 
