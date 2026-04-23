@@ -6,6 +6,7 @@
   </Configurations>
   <Folder Name="/src/">
     <Project Path="src/SimEngine/SimEngine.csproj" />
+    <Project Path="src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SimEngine.Tests/SimEngine.Tests.csproj" />
