@@ -173,7 +173,39 @@ Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling t
 - **`HaversineHeuristic`** — a static helper implementing `PathfindingDelegates.Heuristic`. Callers opt in by passing it to `AStarPathfinder.FindPath`; `null` continues to give Dijkstra.
 - **Benchmark** — a `SimEngine.Benchmarks` project (BenchmarkDotNet) showing Dijkstra vs. A* on a full 4 500-province world graph. Gate on performance before committing to the heuristic complexity.
 
-### Phase 2 — Save/Load
+### Phase 2 — Console Host
+
+A playable harness. No rendering contract in the engine — this is a separate consumer project that reads state and subscribes to the event bus, exactly as a real game would. Doubles as a manual test tool and the place every future phase gets plugged in for eyes-on validation.
+
+- **New project**: `src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj` — `Exe` output, references `SimEngine`, added to `SimEngine.slnx`. `Spectre.Console` pinned in `Directory.Packages.props`.
+- **Determinism boundary** — the console host sits *outside* determinism-sensitive code. Spectre does its own `double` math for layout; none of it feeds back into `SimulationState`. The seed used for `NewGame` is explicit and logged so runs are reproducible.
+- **Main menu** — Spectre `FigletText` title + `SelectionPrompt<string>`: **New Game** / **Load Game** / **Quit**. Load is disabled (greyed) until Phase 3 ships save/load.
+- **New Game flow** — chained Spectre prompts:
+  - World selector (`SelectionPrompt`): `grid4` (synthetic 2×2), `germany_admin1` (16 Bundesländer). Test asset paths resolved from the `SimEngine.Tests` `TestAssets` folder for now; a proper content search path lands with modding.
+  - Start date (`TextPrompt<DateTimeOffset>` with default `1836-01-01`).
+  - PRNG seed (`TextPrompt<ulong>` with default `0` → auto-generated; shown back to the player).
+  - Build via `WorldLoaders.LoadIntoState` → construct `SimulationEngine` → transition into the game loop.
+- **Game loop UI** — Spectre `Layout` split:
+  - Header panel: current date, tick count, world name, province count.
+  - Scrollback: recent events from the engine event bus + command output.
+  - Footer: input prompt.
+- **Command REPL** — parsed with a small command table, not `SelectionPrompt`, so typing is fast:
+  - `help` — command list.
+  - `step <n>` / `step day|week|month|year` — advance ticks. Shows a Spectre `Progress` bar for long runs.
+  - `date` — current simulation date.
+  - `provinces` — `Spectre.Table` of id, name, terrain, neighbor count.
+  - `province <id|name>` — detail panel: component values, centroid, neighbors as a `Tree`.
+  - `path <a> <b>` — A\* query, prints route as a breadcrumb and cost.
+  - `adjacency [id]` — adjacency graph stats or one province's neighbors.
+  - `events [n]` — tail of the last `n` published events (default 20).
+  - `save <file>` / `load <file>` — stubbed with a `not yet implemented` notice until Phase 3.
+  - `quit` — back to main menu.
+- **HeartbeatSystem** (ships with the host, not the engine) — a monthly-cadence `ISimulationSystem` that publishes a `HeartbeatEvent` so `step 400` produces visible scrollback even before Phase 4 lands real game systems. Proves cadence scheduling, event bus, and the rendering path end-to-end.
+- **Event rendering** — the host subscribes to `IEventBus` once at game start; incoming events are formatted through a small `IConsoleEventFormatter` lookup (one formatter per event type) so future phases plug in display without touching the loop.
+- **Exit paths** — `Ctrl+C`, `quit`, and unhandled exceptions all route through a single shutdown that disposes the engine and returns to main menu (not process exit), so a player can start a new run without relaunching.
+- **Tests** — `SimEngine.Tests` gains a small `ConsoleHost.CommandParserTests` suite covering the command table. UI layout itself is not unit-tested; manual smoke via `dotnet run --project src/SimEngine.ConsoleHost` is the acceptance gate.
+
+### Phase 3 — Save/Load
 
 Moved early because every subsequent phase needs it for testing and iteration.
 
@@ -181,8 +213,9 @@ Moved early because every subsequent phase needs it for testing and iteration.
 - JSON to full state restore
 - Round-trip tests: save → load → verify identical state
 - Determinism tests: run N ticks → save → reload from initial → run N ticks → compare results
+- Wires the Console Host `save` / `load` commands and enables the main-menu **Load Game** entry.
 
-### Phase 3 — Core GSG Domain (minimal)
+### Phase 4 — Core GSG Domain (minimal)
 
 First game-specific layer. Deliberately small — just enough for a vertical slice.
 
@@ -194,21 +227,21 @@ First game-specific layer. Deliberately small — just enough for a vertical sli
 
 This is enough to load a real-world map, assign countries, and watch economies tick forward.
 
-### Phase 4 — Military (minimal)
+### Phase 5 — Military (minimal)
 
 - Army entity — owner, province location, unit count (one unit type)
 - Movement — A* on adjacency graph, daily tick to advance along path
 - Combat — two armies in same province, strength comparison with PRNG
 - `MilitarySystem` (daily)
 
-### Phase 5 — Diplomacy & Wars (minimal)
+### Phase 6 — Diplomacy & Wars (minimal)
 
 - War entity — attacker, defender, participants
 - War declaration / peace — event-driven state changes
 - Province occupation as separate from ownership
 - `DiplomacySystem` (daily)
 
-### Phase 6 — Modding & Scripting
+### Phase 7 — Modding & Scripting
 
 - Mod manifest (`mod.json`) + load order + dependency resolution
 - Data overrides via JSON (world, starting state, events)
