@@ -63,6 +63,8 @@ public sealed class ProvinceCommand : ICommand
         if (found is null)
         {
             AnsiConsole.MarkupLine($"[red]No province found:[/] {Markup.Escape(query)}");
+            if (args.Length == 2)
+                AnsiConsole.MarkupLine($"[dim]Tip: to find a path between two provinces use [yellow]path {Markup.Escape(args[0])} {Markup.Escape(args[1])}[/][/]");
             return;
         }
 

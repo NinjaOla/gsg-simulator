@@ -8,15 +8,15 @@ namespace SimEngine.ConsoleHost.Game.Commands;
 public sealed class PathCommand : ICommand
 {
     public string Name => "path";
-    public string[] Aliases => [];
+    public string[] Aliases => ["pt"];
     public string Description => "Find shortest hop path between two provinces.";
-    public string Usage => "path <a> <b>";
+    public string Usage => "path <id|name> <id|name>";
 
     public void Execute(GameSession session, string[] args)
     {
         if (args.Length < 2)
         {
-            AnsiConsole.MarkupLine("[red]Usage:[/] path <province-a> <province-b>");
+            AnsiConsole.MarkupLine("[red]Usage:[/] path <id|name> <id|name>");
             return;
         }
 

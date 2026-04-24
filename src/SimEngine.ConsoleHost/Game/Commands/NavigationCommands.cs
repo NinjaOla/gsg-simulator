@@ -16,7 +16,7 @@ public sealed class HelpCommand(CommandRegistry registry) : ICommand
         foreach (var cmd in registry.All)
         {
             var aliases = cmd.Aliases.Length > 0 ? string.Join(", ", cmd.Aliases) : "[dim]-[/]";
-            table.AddRow(cmd.Name, aliases, cmd.Usage, cmd.Description);
+            table.AddRow(Markup.Escape(cmd.Name), aliases, Markup.Escape(cmd.Usage), Markup.Escape(cmd.Description));
         }
         AnsiConsole.Write(table);
     }
@@ -50,7 +50,7 @@ public sealed class SaveCommand : ICommand
 {
     public string Name => "save";
     public string[] Aliases => [];
-    public string Description => "Save the game. [dim](Phase 3)[/]";
+    public string Description => "Save the game. (Phase 3)";
     public string Usage => "save <file>";
 
     public void Execute(GameSession session, string[] args) =>
@@ -61,7 +61,7 @@ public sealed class LoadCommand : ICommand
 {
     public string Name => "load";
     public string[] Aliases => [];
-    public string Description => "Load a saved game. [dim](Phase 3)[/]";
+    public string Description => "Load a saved game. (Phase 3)";
     public string Usage => "load <file>";
 
     public void Execute(GameSession session, string[] args) =>

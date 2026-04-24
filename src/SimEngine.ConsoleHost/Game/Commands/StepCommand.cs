@@ -16,7 +16,7 @@ public sealed class StepCommand : ICommand
         int ticks = ParseTicks(args);
         if (ticks <= 0)
         {
-            AnsiConsole.MarkupLine("[red]Invalid step argument.[/] Usage: step [n|day|week|month|year]");
+            AnsiConsole.MarkupLine("[red]Invalid step argument.[/] Usage: step [[n|day|week|month|year]]");
             return;
         }
 
