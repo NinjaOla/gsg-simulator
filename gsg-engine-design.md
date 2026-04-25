@@ -168,9 +168,11 @@ The geometry library decision and the GeoJSON pipeline. Gated on the state layer
 
 Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling true A* on continent-scale maps rather than Dijkstra.
 
+See `docs/phase-1c-astar-heuristic-spec.md` for the detailed spec and implementation plan.
+
 - **Admissibility constraint** — the heuristic must never overestimate *any* edge cost. Admissibility analysis is deferred until per-edge movement costs exist (Phase 4 — Military). Shipping the heuristic before costs are defined would risk silently non-optimal paths.
 - **Integer formulation** — compute approximate great-circle distance from centroid microdegrees stored on `ProvinceComponent`. Use fixed-point arithmetic (no `double` in pathfinding state); scale to the same unit as edge weights.
-- **`HaversineHeuristic`** — a static helper implementing `PathfindingDelegates.Heuristic`. Callers opt in by passing it to `AStarPathfinder.FindPath`; `null` continues to give Dijkstra.
+- **`HaversineHeuristic`** — an engine-owned heuristic implementing `PathfindingDelegates.Heuristic`. `SimEngine` defines when it is valid to use; `null` continues to give Dijkstra.
 - **Benchmark** — a `SimEngine.Benchmarks` project (BenchmarkDotNet) showing Dijkstra vs. A* on a full 4 500-province world graph. Gate on performance before committing to the heuristic complexity.
 
 ### Phase 2 — Console Host

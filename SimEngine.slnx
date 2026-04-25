@@ -4,11 +4,23 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="global.json" />
+    <File Path="gsg-engine-design.md" />
+    <File Path="README.md" />
+  </Folder>
   <Folder Name="/src/">
-    <Project Path="src/SimEngine/SimEngine.csproj" />
     <Project Path="src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj" />
+    <Project Path="src/SimEngine/SimEngine.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/SimEngine.Tests/SimEngine.Tests.csproj" />
+  </Folder>
+  <Folder Name="/docs/">
+    <File Path="docs/phase-1c-astar-heuristic-spec.md" />
   </Folder>
 </Solution>
