@@ -1,6 +1,5 @@
 using SimEngine.ConsoleHost.Game;
 using SimEngine.ConsoleHost.Ui;
-using Spectre.Console;
 
 internal static class App
 {
@@ -10,21 +9,22 @@ internal static class App
         {
             var choice = MainMenu.Show();
 
-            switch (choice)
+            GameSession? session = choice switch
             {
-                case MainMenuChoice.NewGame:
-                    var session = NewGameFlow.Run();
-                    if (session is not null)
-                        GameLoop.Run(session);
-                    break;
+                MainMenuChoice.NewGame => NewGameFlow.Run(),
+                MainMenuChoice.LoadGame => LoadGameFlow.Run(),
+                MainMenuChoice.Quit => null,
+                _ => null,
+            };
 
-                case MainMenuChoice.LoadGame:
-                    AnsiConsole.MarkupLine("\n[yellow]Save/Load arrives in Phase 3.[/] Press any key.");
-                    Console.ReadKey(intercept: true);
-                    break;
+            if (choice == MainMenuChoice.Quit)
+            {
+                return;
+            }
 
-                case MainMenuChoice.Quit:
-                    return;
+            while (session is not null)
+            {
+                session = GameLoop.Run(session);
             }
         }
     }

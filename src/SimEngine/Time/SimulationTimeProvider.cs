@@ -38,6 +38,17 @@ public sealed class SimulationTimeProvider : TimeProvider
     /// </summary>
     internal void CommitTick(DateTimeOffset previous) => _previousTick = previous;
 
+    internal void Restore(DateTimeOffset currentTime, DateTimeOffset previousTick)
+    {
+        if (previousTick > currentTime)
+        {
+            throw new ArgumentOutOfRangeException(nameof(previousTick), "previousTick cannot be later than currentTime.");
+        }
+
+        _currentTime = currentTime;
+        _previousTick = previousTick;
+    }
+
     /// <summary>Engine-internal rollback used when a tick is cancelled mid-flight.</summary>
     internal void RollbackTo(DateTimeOffset instant) => _currentTime = instant;
 }

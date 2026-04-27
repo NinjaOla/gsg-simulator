@@ -5,7 +5,7 @@ namespace SimEngine.ConsoleHost.Game;
 
 public static class GameLoop
 {
-    public static void Run(GameSession session)
+    public static GameSession? Run(GameSession session)
     {
         using (session)
         {
@@ -27,6 +27,8 @@ public static class GameLoop
                     AnsiConsole.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(input)}. Type [yellow]help[/].");
             }
         }
+
+        return session.ReplacementSession;
     }
 
     private static void RenderWelcome(GameSession session)

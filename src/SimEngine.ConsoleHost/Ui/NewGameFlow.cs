@@ -1,7 +1,5 @@
 using System.Globalization;
-using SimEngine;
 using SimEngine.ConsoleHost.Game;
-using SimEngine.ConsoleHost.Systems;
 using SimEngine.State;
 using SimEngine.State.Loading;
 using SimEngine.State.Loading.GeoJson;
@@ -73,15 +71,7 @@ public static class NewGameFlow
             return null;
         }
 
-        var options = new SimulationEngineOptions
-        {
-            StartDate = startDate,
-            Seed = seed,
-            InitialState = state,
-        };
-
-        var engine = new SimulationEngine(options, [new HeartbeatSystem()]);
-        var session = new GameSession(engine, world.DisplayName);
+        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName);
 
         AnsiConsole.MarkupLine(
             $"[green]Ready.[/] {session.ProvinceCount} provinces, {session.AdjacencyEdgeCount} borders.");

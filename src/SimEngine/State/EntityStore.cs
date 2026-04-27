@@ -41,6 +41,26 @@ public sealed class EntityStore
         return id;
     }
 
+    internal EntityId Create(EntityId id)
+    {
+        if (id == EntityId.None)
+        {
+            throw new ArgumentException("EntityId.None is not a valid entity id.", nameof(id));
+        }
+
+        if (!_liveEntities.Add(id))
+        {
+            throw new InvalidOperationException($"Entity {id} already exists.");
+        }
+
+        if (id.Value >= _nextId)
+        {
+            _nextId = checked(id.Value + 1);
+        }
+
+        return id;
+    }
+
     public bool Exists(EntityId id) => _liveEntities.Contains(id);
 
     /// <summary>

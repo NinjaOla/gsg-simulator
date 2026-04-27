@@ -14,6 +14,7 @@ public sealed class GameSession : IDisposable
     public SimulationEngine Engine { get; }
     public string WorldName { get; }
     public bool ShouldQuit { get; set; }
+    internal GameSession? ReplacementSession { get; private set; }
 
     public int ProvinceCount => Engine.State.Entities.CountOf<ProvinceComponent>();
     public int AdjacencyEdgeCount => Engine.State.Adjacency.EdgeCount;
@@ -33,6 +34,15 @@ public sealed class GameSession : IDisposable
         _eventLog.Add(markup);
         if (_eventLog.Count > MaxLogEntries)
             _eventLog.RemoveAt(0);
+    }
+
+    /// <summary>Requests that the current session be replaced after the loop exits.</summary>
+    public void ReplaceWith(GameSession session)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        ReplacementSession = session;
+        ShouldQuit = true;
     }
 
     public void Dispose()

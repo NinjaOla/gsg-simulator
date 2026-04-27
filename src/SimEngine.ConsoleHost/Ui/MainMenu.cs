@@ -23,7 +23,7 @@ public static class MainMenu
                 .UseConverter(c => c switch
                 {
                     MainMenuChoice.NewGame  => "New Game",
-                    MainMenuChoice.LoadGame => "Load Game  [dim](Phase 3)[/]",
+                    MainMenuChoice.LoadGame => "Load Game",
                     MainMenuChoice.Quit     => "Quit",
                     _                      => c.ToString(),
                 })

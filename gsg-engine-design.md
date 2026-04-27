@@ -164,7 +164,7 @@ The geometry library decision and the GeoJSON pipeline. Gated on the state layer
 - **Test assets** — `tests/SimEngine.Tests/TestAssets/grid4.geojson` (handcrafted 2×2 grid) and `germany_admin1.geojson` (16 Bundesländer curated from Natural Earth, ~311 KB). Integration test asserts ≥ 10 internal borders, mean degree 2–7, and byte-identical determinism on repeated loads. Reproduction command documented in `TestAssets/README.md`.
 - **Terrain** — every loaded province is `Terrain.Land`. Sea provinces come from a separate dataset (future phase).
 
-#### Phase 1c — A* heuristic
+#### Phase 1c — A* heuristic ✅
 
 Haversine / fixed-point great-circle heuristic for `AStarPathfinder`, enabling true A* on continent-scale maps rather than Dijkstra.
 
@@ -175,7 +175,7 @@ See `docs/phase-1c-astar-heuristic-spec.md` for the detailed spec and implementa
 - **`HaversineHeuristic`** — an engine-owned heuristic implementing `PathfindingDelegates.Heuristic`. `SimEngine` defines when it is valid to use; `null` continues to give Dijkstra.
 - **Benchmark** — a `SimEngine.Benchmarks` project (BenchmarkDotNet) showing Dijkstra vs. A* on a full 4 500-province world graph. Gate on performance before committing to the heuristic complexity.
 
-### Phase 2 — Console Host
+### Phase 2 — Console Host ✅
 
 A playable harness. No rendering contract in the engine — this is a separate consumer project that reads state and subscribes to the event bus, exactly as a real game would. Doubles as a manual test tool and the place every future phase gets plugged in for eyes-on validation.
 
@@ -211,11 +211,68 @@ A playable harness. No rendering contract in the engine — this is a separate c
 
 Moved early because every subsequent phase needs it for testing and iteration.
 
-- Full state to JSON — entities, components, relationships, current simulation date
-- JSON to full state restore
-- Round-trip tests: save → load → verify identical state
-- Determinism tests: run N ticks → save → reload from initial → run N ticks → compare results
-- Wires the Console Host `save` / `load` commands and enables the main-menu **Load Game** entry.
+**Phase 3 decisions locked up front**
+- **System RNG identity** — per-system PRNG state is keyed by a stable save-format identity (for example `SystemKey`), not by a mutable display name or CLR type name. Renaming a system class or changing UI labels must not invalidate existing saves.
+- **Versioning policy** — Phase 3 ships with `FormatVersion = 1` and exact-version loading only. Older/newer versions are rejected with a clear compatibility error. Forward migrations and back-compat loaders are a later phase, not hidden scope in the first implementation.
+- **Component extensibility boundary** — the save contract is component-section based from day one, with each section identified by a stable component key and handled by an engine-owned registry/codec. Phase 3 only ships codecs for engine-owned components that exist today; mod/plugin component persistence is explicitly deferred until Phase 7.
+- **Unknown sections policy** — unknown component sections are rejected in Phase 3. This is intentional while the format is engine-owned and closed-world; the rule can be relaxed later when mod serialization exists.
+- **Equality target** — Phase 3 aims for both structural equality after round-trip and byte-stable JSON for equivalent snapshots produced by the same engine version.
+
+- **Save boundary** — save/load only happens at a tick boundary, never mid-tick. `Step()` remains atomic; no partially-applied system work, no pending event queue, and no background serializer work touching mutable state while systems execute.
+- **What must be persisted for exact resume** — not just `SimulationState`, but the whole deterministic simulation snapshot: current date, tick number, default tick delta, full entity/component store, relationship graph, adjacency graph, root PRNG state, and per-system PRNG states keyed by stable system identity. Without PRNG state, save/load would break replay equivalence.
+- **What is explicitly not persisted** — console UI state, event-bus subscriptions, scrollback, active prompts, and any renderer/host concerns. A loaded game constructs a fresh host session around restored engine state.
+
+- **Phase 3a — Snapshot contract**
+  - Add an engine-owned JSON save format under `src/SimEngine/State/Serialization/` (or equivalent) rather than serializing runtime containers like `FrozenDictionary`, `SortedSet`, or `ComponentStore<T>` directly.
+  - Define DTOs for the on-disk contract: `SimulationSaveFile`, `EngineSnapshot`, `SimulationStateSnapshot`, `EntitySnapshot`, `RelationshipSnapshot`, `AdjacencySnapshot`, `RandomSnapshot`, plus per-component payload records.
+  - Include a `FormatVersion` field from day one. Phase 3 only accepts the current exact version; migration support is deliberately out of scope for the first ship.
+  - Store deterministic collections as canonical arrays sorted ascending by id / label so two equivalent saves produce byte-stable JSON regardless of runtime container enumeration quirks.
+  - Start with the components that exist today (`ProvinceComponent`) but shape the contract as named component sections backed by an engine-owned registry/codec abstraction so new engine components can be added later without redesigning the file format.
+
+- **Phase 3b — Engine serialization implementation**
+  - Add engine APIs for save and load. The engine should own the feature, not the console host: e.g. a serializer/service inside `SimEngine` plus a load path that returns a fully-initialized `SimulationEngine` from a save file.
+  - Save captures `SimulationEngine` internals that affect determinism: clock, tick number, engine options needed at resume, root RNG snapshot, and each forked system RNG snapshot keyed by stable system identity.
+  - Load rebuilds a fresh `SimulationState`, restores time and RNG state, reconstructs the engine, and validates invariants before the first resumed tick.
+  - Validation should reject malformed files early: duplicate entity ids, dangling relationship endpoints, province ids missing matching entities, asymmetric adjacency, unsorted neighbor lists, invalid enum values, unknown component sections, missing required sections, unknown system RNG identities, and all-zero xoshiro state.
+  - Keep JSON human-readable, but writer settings must be deterministic: invariant culture, explicit property names, stable ordering of emitted arrays, and canonical property emission so equivalent snapshots serialize byte-identically.
+
+- **Phase 3c — Equality and determinism test suite**
+  - Add round-trip tests for a representative world: build state → save → load → assert structural equality for entities, components, relationships, adjacency, date, tick number, and RNG state.
+  - Add canonical-output tests: equivalent snapshots saved twice from equivalent engine states must produce byte-identical JSON under the same engine version.
+  - Add resume-determinism tests: run `N` ticks, save, continue for `M`; separately reload from the save and run the same `M`; final state and emitted events must match exactly.
+  - Add a PRNG-sensitive system test so determinism checks prove random-state restoration, not just structural serialization.
+  - Add negative tests for corrupt or incompatible saves (bad version, bad JSON, dangling ids, duplicate ids, invalid RNG snapshot, unknown component section, unknown system RNG identity) with precise exceptions.
+
+- **Phase 3d — Console Host integration**
+  - Replace the current stubbed `save <file>` / `load <file>` commands with real wiring to the engine save APIs.
+  - Relative paths resolve against a host-owned `saves/` directory; absolute paths still work for tests and power users.
+  - `save` reports where the file was written plus a short summary (date, tick, province count, seed/save metadata).
+  - `load` disposes the current `GameSession`, constructs a new one from the restored engine, re-subscribes event formatters, and clears/reseeds host-side scrollback.
+  - Enable the main-menu **Load Game** entry. Preferred UX: list discovered save files first, with a manual path fallback.
+
+- **Phase 3e — Acceptance gate**
+  - Engine unit/integration tests cover serialization mechanics and determinism.
+  - Console host command tests cover argument parsing and path handling for `save` / `load`.
+  - Manual smoke: start a game, advance several ticks, save, return to menu, load, advance again, confirm date/tick/event flow continue correctly.
+  - Phase 4 work does not start until save/load is stable enough to support rapid iteration and deterministic bug reproduction.
+
+**Recommended implementation order**
+1. Lock the on-disk DTO contract and `FormatVersion = 1` before adding any public save/load API.
+2. Implement component-section codecs/registry for current engine-owned components only.
+3. Implement pure state snapshot write/read for `SimulationState` with invariant validation.
+4. Add engine snapshot persistence for clock, tick counter, default tick delta, root RNG, and per-system RNGs.
+5. Add load-time engine reconstruction that rebinds systems, restores RNG streams by stable system identity, and rejects mismatches before first tick.
+6. Finish the engine-side round-trip, negative, and resume-determinism tests before touching the console host.
+7. Wire the console host `save` / `load` commands only after the engine API and tests are stable.
+8. Run manual smoke last; do not start Phase 4 work on top of a partially-validated save format.
+
+**Phase 3 exit criteria**
+- Saving the same logical engine state twice under the same engine version produces byte-identical JSON.
+- Loading a saved game reconstructs a valid engine that can advance the next tick without special-case host repair work.
+- Resume after save/load is deterministic for both state and emitted events in PRNG-sensitive scenarios.
+- Corrupt, incompatible, or semantically-invalid save files fail fast with precise exceptions.
+- Console host save/load works against both discovered save files and explicit paths without leaking prior session state.
+- The team can use save files as reliable reproduction artifacts for Phase 4+ bugs.
 
 ### Phase 4 — Core GSG Domain (minimal)
 

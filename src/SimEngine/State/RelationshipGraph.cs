@@ -115,6 +115,17 @@ public sealed class RelationshipGraph
         _count = 0;
     }
 
+    internal IEnumerable<(EntityId From, RelationshipLabel Label, EntityId To)> EnumerateAll()
+    {
+        foreach (var kvp in _outbound)
+        {
+            foreach (var to in kvp.Value)
+            {
+                yield return (kvp.Key.From, kvp.Key.Label, to);
+            }
+        }
+    }
+
     private static SortedSet<EntityId> GetOrCreate(
         SortedDictionary<(EntityId, RelationshipLabel), SortedSet<EntityId>> dict,
         (EntityId, RelationshipLabel) key)

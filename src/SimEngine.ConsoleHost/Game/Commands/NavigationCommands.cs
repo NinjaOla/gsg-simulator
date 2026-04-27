@@ -50,20 +50,52 @@ public sealed class SaveCommand : ICommand
 {
     public string Name => "save";
     public string[] Aliases => [];
-    public string Description => "Save the game. (Phase 3)";
+    public string Description => "Save the game.";
     public string Usage => "save <file>";
 
-    public void Execute(GameSession session, string[] args) =>
-        AnsiConsole.MarkupLine("[yellow]Save/Load arrives in Phase 3.[/]");
+    public void Execute(GameSession session, string[] args)
+    {
+        if (args.Length != 1)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Usage:[/] {Markup.Escape(Usage)}");
+            return;
+        }
+
+        try
+        {
+            var resolvedPath = GameSessionFactory.Save(session, args[0]);
+            AnsiConsole.MarkupLine(
+                $"[green]Saved.[/] {Markup.Escape(resolvedPath)}  [dim]{session.Engine.Time.Current:yyyy-MM-dd} · tick {session.Engine.TickNumber} · {session.ProvinceCount} provinces[/]");
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            AnsiConsole.MarkupLine($"[red]Could not save game:[/] {Markup.Escape(ex.Message)}");
+        }
+    }
 }
 
 public sealed class LoadCommand : ICommand
 {
     public string Name => "load";
     public string[] Aliases => [];
-    public string Description => "Load a saved game. (Phase 3)";
+    public string Description => "Load a saved game.";
     public string Usage => "load <file>";
 
-    public void Execute(GameSession session, string[] args) =>
-        AnsiConsole.MarkupLine("[yellow]Save/Load arrives in Phase 3.[/]");
+    public void Execute(GameSession session, string[] args)
+    {
+        if (args.Length != 1)
+        {
+            AnsiConsole.MarkupLine($"[yellow]Usage:[/] {Markup.Escape(Usage)}");
+            return;
+        }
+
+        try
+        {
+            session.ReplaceWith(GameSessionFactory.Load(args[0]));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            AnsiConsole.MarkupLine($"[red]Could not load save:[/] {Markup.Escape(ex.Message)}");
+        }
+    }
 }

@@ -1,6 +1,7 @@
 using SimEngine.Events;
 using SimEngine.Random;
 using SimEngine.State;
+using SimEngine.State.Serialization;
 using SimEngine.Systems;
 using SimEngine.Time;
 
@@ -61,6 +62,44 @@ public sealed class SimulationEngine
     public long TickNumber => _tickNumber;
 
     public IReadOnlyList<IReadOnlyList<ISimulationSystem>> Batches => _graph.Batches;
+
+    /// <summary>Saves the full deterministic engine snapshot to a JSON file.</summary>
+    public void Save(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Path cannot be null or whitespace.", nameof(path));
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        using var stream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        Save(stream);
+    }
+
+    /// <summary>Saves the full deterministic engine snapshot to a JSON stream.</summary>
+    public void Save(Stream stream) => SimulationSaveSerializer.Save(this, stream);
+
+    /// <summary>Loads a full deterministic engine snapshot from a JSON file.</summary>
+    public static SimulationEngine Load(string path, IEnumerable<ISimulationSystem> systems)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Path cannot be null or whitespace.", nameof(path));
+        }
+
+        using var stream = new FileStream(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Load(stream, systems);
+    }
+
+    /// <summary>Loads a full deterministic engine snapshot from a JSON stream.</summary>
+    public static SimulationEngine Load(Stream stream, IEnumerable<ISimulationSystem> systems)
+        => SimulationSaveSerializer.Load(stream, systems);
 
     public void Step(CancellationToken ct = default) => Step(Options.DefaultTickDelta, ct);
 
@@ -186,5 +225,45 @@ public sealed class SimulationEngine
         }
 
         return hash;
+    }
+
+    internal IReadOnlyCollection<string> SystemNames => _systemRandoms.Keys;
+
+    internal (ulong s0, ulong s1, ulong s2, ulong s3) SnapshotRootRandomState() => _random.SnapshotState();
+
+    internal IReadOnlyDictionary<string, (ulong s0, ulong s1, ulong s2, ulong s3)> SnapshotSystemRandomStates()
+        => _systemRandoms.ToDictionary(entry => entry.Key, entry => entry.Value.SnapshotState(), StringComparer.Ordinal);
+
+    internal void RestoreRuntime(
+        DateTimeOffset currentTime,
+        DateTimeOffset previousTick,
+        long tickNumber,
+        RandomSnapshot rootRandom,
+        IEnumerable<SystemRandomSnapshot> systemRandoms)
+    {
+        if (tickNumber < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tickNumber), tickNumber, "tickNumber must be non-negative.");
+        }
+
+        ArgumentNullException.ThrowIfNull(systemRandoms);
+
+        _time.Restore(currentTime, previousTick);
+        _tickNumber = tickNumber;
+        _random.RestoreState(rootRandom.S0, rootRandom.S1, rootRandom.S2, rootRandom.S3);
+
+        foreach (var systemRandom in systemRandoms)
+        {
+            if (!_systemRandoms.TryGetValue(systemRandom.SystemName, out var rng))
+            {
+                throw new InvalidOperationException($"System '{systemRandom.SystemName}' is not registered on this engine.");
+            }
+
+            rng.RestoreState(
+                systemRandom.Random.S0,
+                systemRandom.Random.S1,
+                systemRandom.Random.S2,
+                systemRandom.Random.S3);
+        }
     }
 }

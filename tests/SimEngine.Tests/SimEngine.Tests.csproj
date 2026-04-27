@@ -21,6 +21,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SimEngine\SimEngine.csproj" />
+    <ProjectReference Include="..\..\src\SimEngine.ConsoleHost\SimEngine.ConsoleHost.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="TestAssets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
