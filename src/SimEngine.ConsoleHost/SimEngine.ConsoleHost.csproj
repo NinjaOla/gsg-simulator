@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SimEngine\SimEngine.csproj" />
+    <ProjectReference Include="..\SimEngine.Game\SimEngine.Game.csproj" />
   </ItemGroup>
 
   <ItemGroup>

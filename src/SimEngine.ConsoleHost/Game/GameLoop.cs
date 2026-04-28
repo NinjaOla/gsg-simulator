@@ -55,6 +55,8 @@ public static class GameLoop
         [
             new StepCommand(),
             new DateCommand(),
+            new CountriesCommand(),
+            new CountryCommand(),
             new ProvincesCommand(),
             new ProvinceCommand(),
             new PathCommand(),

@@ -10,10 +10,17 @@ namespace SimEngine.Systems;
 public interface ISimulationSystem
 {
     /// <summary>
-    /// Stable identifier used for ordering, diagnostics, and deterministic
-    /// PRNG forking. Must be unique within a <see cref="SimulationEngine"/>.
+    /// Display name used for diagnostics and batch ordering tiebreaking.
     /// </summary>
     string Name { get; }
+
+    /// <summary>
+    /// Stable save-file identifier for PRNG stream forking. Must be unique
+    /// and non-blank within a <see cref="SimulationEngine"/>. Changing this
+    /// value invalidates existing saves; rename <see cref="Name"/> instead
+    /// for display-only changes.
+    /// </summary>
+    string Key { get; }
 
     TickCadence Cadence { get; }
 

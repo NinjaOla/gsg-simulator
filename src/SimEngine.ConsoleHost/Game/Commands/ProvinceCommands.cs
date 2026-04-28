@@ -1,3 +1,4 @@
+using SimEngine.Game.Components;
 using SimEngine.Ids;
 using SimEngine.State.Components;
 using Spectre.Console;
@@ -76,6 +77,17 @@ public sealed class ProvinceCommand : ICommand
         var tree = new Tree($"[bold]{Markup.Escape(comp.Name)}[/]  [dim]P#{pid.Value}[/]");
         tree.AddNode($"Terrain: [yellow]{comp.Terrain}[/]");
         tree.AddNode($"Centroid: {lat:F4} lat, {lon:F4} lon");
+
+        var eid = pid.AsEntity();
+        if (session.Engine.State.Entities.TryGet<PopulationComponent>(eid, out var pop))
+        {
+            tree.AddNode($"Population: [cyan]{pop.Population:N0}[/]  Growth: [cyan]{pop.GrowthRateE6 / 10_000.0:F2}%[/]/yr");
+        }
+
+        if (session.Engine.State.Entities.TryGet<EconomyComponent>(eid, out var eco))
+        {
+            tree.AddNode($"Production: [cyan]{eco.ProductionE2 / 100.0:F2}[/]/mo");
+        }
 
         var neighborsNode = tree.AddNode($"Neighbors ({neighbors.Length})");
         foreach (var n in neighbors)
