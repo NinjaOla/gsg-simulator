@@ -38,13 +38,28 @@ public sealed class SimulationEngine
         var systemList = systems.ToArray();
         _graph = SystemDependencyGraph.Build(systemList);
 
-        // Pre-fork per-system PRNGs. Keyed by system name so the stream a
-        // system sees is stable across unrelated changes elsewhere.
+        // Validate system keys before forking PRNGs.
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var system in systemList)
+        {
+            if (string.IsNullOrWhiteSpace(system.Key))
+            {
+                throw new ArgumentException($"System '{system.Name}' has a blank or whitespace Key.", nameof(systems));
+            }
+
+            if (!seenKeys.Add(system.Key))
+            {
+                throw new ArgumentException($"Duplicate system Key '{system.Key}'.", nameof(systems));
+            }
+        }
+
+        // Pre-fork per-system PRNGs. Keyed by system Key so the stream a
+        // system sees is stable across display-name changes.
         _systemRandoms = new Dictionary<string, Xoshiro256StarStar>(StringComparer.Ordinal);
         foreach (var system in systemList)
         {
-            var streamId = StableNameHash(system.Name);
-            _systemRandoms[system.Name] = (Xoshiro256StarStar)_random.Fork(streamId);
+            var streamId = StableNameHash(system.Key);
+            _systemRandoms[system.Key] = (Xoshiro256StarStar)_random.Fork(streamId);
         }
     }
 
@@ -86,7 +101,10 @@ public sealed class SimulationEngine
     public void Save(Stream stream) => SimulationSaveSerializer.Save(this, stream);
 
     /// <summary>Loads a full deterministic engine snapshot from a JSON file.</summary>
-    public static SimulationEngine Load(string path, IEnumerable<ISimulationSystem> systems)
+    public static SimulationEngine Load(
+        string path,
+        IEnumerable<ISimulationSystem> systems,
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -94,12 +112,15 @@ public sealed class SimulationEngine
         }
 
         using var stream = new FileStream(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
-        return Load(stream, systems);
+        return Load(stream, systems, componentCodecs);
     }
 
     /// <summary>Loads a full deterministic engine snapshot from a JSON stream.</summary>
-    public static SimulationEngine Load(Stream stream, IEnumerable<ISimulationSystem> systems)
-        => SimulationSaveSerializer.Load(stream, systems);
+    public static SimulationEngine Load(
+        Stream stream,
+        IEnumerable<ISimulationSystem> systems,
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null)
+        => SimulationSaveSerializer.Load(stream, systems, componentCodecs);
 
     public void Step(CancellationToken ct = default) => Step(Options.DefaultTickDelta, ct);
 
@@ -195,7 +216,7 @@ public sealed class SimulationEngine
         var ctx = new SimulationContext
         {
             Time = _time,
-            Random = _systemRandoms[system.Name],
+            Random = _systemRandoms[system.Key],
             Events = _events,
             State = _state,
             TickNumber = _tickNumber,
@@ -227,7 +248,7 @@ public sealed class SimulationEngine
         return hash;
     }
 
-    internal IReadOnlyCollection<string> SystemNames => _systemRandoms.Keys;
+    internal IReadOnlyCollection<string> SystemKeys => _systemRandoms.Keys;
 
     internal (ulong s0, ulong s1, ulong s2, ulong s3) SnapshotRootRandomState() => _random.SnapshotState();
 
@@ -254,9 +275,9 @@ public sealed class SimulationEngine
 
         foreach (var systemRandom in systemRandoms)
         {
-            if (!_systemRandoms.TryGetValue(systemRandom.SystemName, out var rng))
+            if (!_systemRandoms.TryGetValue(systemRandom.SystemKey, out var rng))
             {
-                throw new InvalidOperationException($"System '{systemRandom.SystemName}' is not registered on this engine.");
+                throw new InvalidOperationException($"System with key '{systemRandom.SystemKey}' is not registered on this engine.");
             }
 
             rng.RestoreState(

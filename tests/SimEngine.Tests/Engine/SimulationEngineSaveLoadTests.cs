@@ -105,6 +105,56 @@ public sealed class SimulationEngineSaveLoadTests
         Assert.Throws<InvalidDataException>(() => LoadFromJson(invalidJson));
     }
 
+    [Fact]
+    public void SaveLoad_RenameDisplayName_StillLoads()
+    {
+        // Saving with one Name and loading with a different Name (but same Key) must succeed.
+        var engine = CreateEngine();
+        engine.StepMany(2);
+        var json = SaveToJson(engine);
+
+        // Load with a system that has the same Key but a different display Name.
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var loaded = SimulationEngine.Load(stream, [new RenamedMutationSystem()]);
+
+        Assert.Equal(engine.TickNumber, loaded.TickNumber);
+    }
+
+    [Fact]
+    public void SaveLoad_ChangeKey_ThrowsInvalidDataException()
+    {
+        // Changing the Key (not just the display Name) must invalidate the save.
+        var engine = CreateEngine();
+        var json = SaveToJson(engine);
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        Assert.Throws<InvalidDataException>(() =>
+            SimulationEngine.Load(stream, [new DifferentKeyMutationSystem()]));
+    }
+
+    private sealed class RenamedMutationSystem : ISimulationSystem
+    {
+        // Same Key as MutationSystem, different display Name.
+        public string Name => "mutation-renamed";
+        public string Key => "mutation";
+        public TickCadence Cadence => TickCadence.EveryTick;
+        public int Order => 0;
+        public IReadOnlyCollection<StateKey> Reads => [];
+        public IReadOnlyCollection<StateKey> Writes => [ComponentStateKeys.Of<ProvinceComponent>()];
+        public void Execute(in SimulationContext ctx) { }
+    }
+
+    private sealed class DifferentKeyMutationSystem : ISimulationSystem
+    {
+        public string Name => "mutation";
+        public string Key => "mutation.v2";
+        public TickCadence Cadence => TickCadence.EveryTick;
+        public int Order => 0;
+        public IReadOnlyCollection<StateKey> Reads => [];
+        public IReadOnlyCollection<StateKey> Writes => [ComponentStateKeys.Of<ProvinceComponent>()];
+        public void Execute(in SimulationContext ctx) { }
+    }
+
     private static SimulationEngine CreateEngine()
     {
         var state = new SimulationState();
@@ -170,6 +220,7 @@ public sealed class SimulationEngineSaveLoadTests
     private sealed class MutationSystem : ISimulationSystem
     {
         public string Name => "mutation";
+        public string Key => "mutation";
 
         public TickCadence Cadence => TickCadence.EveryTick;
 

@@ -176,6 +176,7 @@ public sealed class SimulationEngineTickTests
     private sealed class PublishingSystem : ISimulationSystem
     {
         public string Name => "publisher";
+        public string Key => "publisher";
 
         public TickCadence Cadence => TickCadence.EveryTick;
 

@@ -23,6 +23,7 @@ internal sealed class RecordingSystem : ISimulationSystem
         Action<SimulationContextSnapshot>? onExecute = null)
     {
         Name = name;
+        Key = name;
         Cadence = cadence;
         Order = order;
         Reads = reads ?? Array.Empty<StateKey>();
@@ -31,6 +32,8 @@ internal sealed class RecordingSystem : ISimulationSystem
     }
 
     public string Name { get; }
+
+    public string Key { get; }
 
     public TickCadence Cadence { get; }
 

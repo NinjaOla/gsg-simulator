@@ -100,11 +100,14 @@ public sealed class DeterminismSmokeTests
         public RngSystem(string name, int order, Action<string> log)
         {
             Name = name;
+            Key = name;
             Order = order;
             _log = log;
         }
 
         public string Name { get; }
+
+        public string Key { get; }
 
         public TickCadence Cadence => TickCadence.EveryTick;
 

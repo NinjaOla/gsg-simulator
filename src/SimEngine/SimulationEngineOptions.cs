@@ -1,4 +1,5 @@
 using SimEngine.State;
+using SimEngine.State.Serialization;
 
 namespace SimEngine;
 
@@ -28,4 +29,11 @@ public sealed class SimulationEngineOptions
     /// build a world with <see cref="WorldBuilder"/>, pass the result here.
     /// </summary>
     public SimulationState? InitialState { get; init; }
+
+    /// <summary>
+    /// Pluggable codecs for additional component types beyond the built-in
+    /// <c>ProvinceComponent</c>. Each codec handles one section type in the
+    /// save file. Order does not matter; section types must be unique.
+    /// </summary>
+    public IReadOnlyList<IComponentSectionCodec> ComponentCodecs { get; init; } = [];
 }

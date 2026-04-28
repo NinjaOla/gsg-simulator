@@ -1,5 +1,6 @@
 using System.Globalization;
 using SimEngine.ConsoleHost.Game;
+using SimEngine.Game.Seeding;
 using SimEngine.State;
 using SimEngine.State.Loading;
 using SimEngine.State.Loading.GeoJson;
@@ -62,6 +63,7 @@ public static class NewGameFlow
             {
                 var loader = new GeoJsonWorldLoader();
                 state = WorldLoaders.LoadIntoState(loader, world.FullPath);
+                GameWorldSeeder.Seed(state);
             });
 
         if (state is null)

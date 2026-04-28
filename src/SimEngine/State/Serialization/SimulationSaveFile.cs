@@ -31,7 +31,7 @@ internal sealed record RandomSnapshot(
     ulong S3);
 
 internal sealed record SystemRandomSnapshot(
-    string SystemName,
+    string SystemKey,
     RandomSnapshot Random);
 
 internal sealed record SimulationStateSnapshot(

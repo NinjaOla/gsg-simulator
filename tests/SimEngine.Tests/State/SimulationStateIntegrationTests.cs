@@ -120,6 +120,7 @@ public sealed class SimulationStateIntegrationTests
         private readonly List<IReadOnlyList<(EntityId Id, Terrain Terrain)>> _observations = new();
 
         public string Name => "province-observer";
+        public string Key => "province-observer";
 
         public TickCadence Cadence => TickCadence.EveryTick;
 
@@ -143,6 +144,7 @@ public sealed class SimulationStateIntegrationTests
     private sealed class StateCaptureSystem : ISimulationSystem
     {
         public string Name => "state-capture";
+        public string Key => "state-capture";
 
         public TickCadence Cadence => TickCadence.EveryTick;
 

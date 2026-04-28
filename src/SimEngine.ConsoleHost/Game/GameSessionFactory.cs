@@ -1,5 +1,8 @@
 using SimEngine.ConsoleHost.Systems;
+using SimEngine.Game.Serialization;
+using SimEngine.Game.Systems;
 using SimEngine.State;
+using SimEngine.State.Serialization;
 using SimEngine.Systems;
 
 namespace SimEngine.ConsoleHost.Game;
@@ -17,6 +20,7 @@ internal static class GameSessionFactory
                 StartDate = startDate,
                 Seed = seed,
                 InitialState = state,
+                ComponentCodecs = GameCodecs.All,
             },
             CreateSystems());
 
@@ -35,9 +39,14 @@ internal static class GameSessionFactory
     public static GameSession Load(string path)
     {
         var resolvedPath = SaveGamePaths.Resolve(path);
-        var engine = SimulationEngine.Load(resolvedPath, CreateSystems());
+        var engine = SimulationEngine.Load(resolvedPath, CreateSystems(), GameCodecs.All);
         return new GameSession(engine, SaveGamePaths.GetDisplayName(resolvedPath));
     }
 
-    private static ISimulationSystem[] CreateSystems() => [new HeartbeatSystem()];
+    private static ISimulationSystem[] CreateSystems() =>
+    [
+        new HeartbeatSystem(),
+        new PopulationSystem(),
+        new EconomySystem(),
+    ];
 }

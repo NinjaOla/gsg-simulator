@@ -30,7 +30,10 @@ internal static class SimulationSaveSerializer
         JsonSerializer.Serialize(stream, saveFile, JsonOptions);
     }
 
-    public static SimulationEngine Load(Stream stream, IEnumerable<ISimulationSystem> systems)
+    public static SimulationEngine Load(
+        Stream stream,
+        IEnumerable<ISimulationSystem> systems,
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(systems);
@@ -41,6 +44,7 @@ internal static class SimulationSaveSerializer
         }
 
         var systemList = systems.ToArray();
+        var codecs = componentCodecs ?? [];
         SimulationSaveFile? saveFile;
 
         try
@@ -57,7 +61,8 @@ internal static class SimulationSaveSerializer
             throw new InvalidDataException("Save file was empty.");
         }
 
-        ValidateSaveFile(saveFile, systemList);
+        var allowedSectionTypes = BuildAllowedSectionTypes(codecs);
+        ValidateSaveFile(saveFile, systemList, allowedSectionTypes);
 
         var engine = new SimulationEngine(
             new SimulationEngineOptions
@@ -67,7 +72,8 @@ internal static class SimulationSaveSerializer
                 DefaultTickDelta = TimeSpan.FromTicks(saveFile.Engine.DefaultTickDeltaTicks),
                 EnableParallelBatches = saveFile.Engine.EnableParallelBatches,
                 MaxDegreeOfParallelism = saveFile.Engine.MaxDegreeOfParallelism,
-                InitialState = RestoreState(saveFile.Engine.State),
+                ComponentCodecs = codecs,
+                InitialState = RestoreState(saveFile.Engine.State, codecs),
             },
             systemList);
 
@@ -109,12 +115,20 @@ internal static class SimulationSaveSerializer
                     .ToArray()))
             .ToArray();
 
-        var componentSections = new[]
-        {
-            new ComponentSectionSnapshot(
-                SimulationComponentSections.ProvinceComponent,
-                JsonSerializer.SerializeToElement(provinceComponents, JsonOptions)),
-        };
+        var builtinSection = new ComponentSectionSnapshot(
+            SimulationComponentSections.ProvinceComponent,
+            JsonSerializer.SerializeToElement(provinceComponents, JsonOptions));
+
+        var codecSections = engine.Options.ComponentCodecs
+            .Select(codec => new ComponentSectionSnapshot(
+                codec.SectionType,
+                codec.WriteSection(engine.State, JsonOptions)))
+            .ToArray();
+
+        var componentSections = new[] { builtinSection }
+            .Concat(codecSections)
+            .OrderBy(s => s.SectionType, StringComparer.Ordinal)
+            .ToArray();
 
         var saveFile = new SimulationSaveFile(
             CurrentFormatVersion,
@@ -138,11 +152,14 @@ internal static class SimulationSaveSerializer
                     adjacency,
                     componentSections)));
 
-        ValidateSaveFile(saveFile, engine.SystemNames);
+        var allowedSectionTypes = BuildAllowedSectionTypes(engine.Options.ComponentCodecs);
+        ValidateSaveFile(saveFile, engine.SystemKeys, allowedSectionTypes);
         return saveFile;
     }
 
-    private static SimulationState RestoreState(SimulationStateSnapshot snapshot)
+    private static SimulationState RestoreState(
+        SimulationStateSnapshot snapshot,
+        IReadOnlyList<IComponentSectionCodec> codecs)
     {
         var state = new SimulationState();
 
@@ -160,6 +177,20 @@ internal static class SimulationSaveSerializer
                     (Terrain)province.Terrain,
                     province.CentroidLatE6,
                     province.CentroidLonE6));
+        }
+
+        if (codecs.Count > 0)
+        {
+            var sectionsByType = snapshot.ComponentSections
+                .ToDictionary(s => s.SectionType, s => s, StringComparer.Ordinal);
+
+            foreach (var codec in codecs)
+            {
+                if (sectionsByType.TryGetValue(codec.SectionType, out var section))
+                {
+                    codec.ReadSection(state, section.Payload, JsonOptions);
+                }
+            }
         }
 
         foreach (var relationship in snapshot.Relationships)
@@ -205,12 +236,18 @@ internal static class SimulationSaveSerializer
         }
     }
 
-    private static void ValidateSaveFile(SimulationSaveFile saveFile, IEnumerable<ISimulationSystem> systems)
+    private static void ValidateSaveFile(
+        SimulationSaveFile saveFile,
+        IEnumerable<ISimulationSystem> systems,
+        IReadOnlyCollection<string> allowedSectionTypes)
     {
-        ValidateSaveFile(saveFile, systems.Select(system => system.Name));
+        ValidateSaveFile(saveFile, systems.Select(system => system.Key), allowedSectionTypes);
     }
 
-    private static void ValidateSaveFile(SimulationSaveFile saveFile, IEnumerable<string> expectedSystemNames)
+    private static void ValidateSaveFile(
+        SimulationSaveFile saveFile,
+        IEnumerable<string> expectedSystemKeys,
+        IReadOnlyCollection<string> allowedSectionTypes)
     {
         if (saveFile.FormatVersion != CurrentFormatVersion)
         {
@@ -240,34 +277,34 @@ internal static class SimulationSaveSerializer
 
         ValidateRandomSnapshot(engine.RootRandom, "root RNG");
 
-        var expectedNames = expectedSystemNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
-        var savedNames = engine.SystemRandoms
-            .Select(snapshot => snapshot.SystemName)
-            .OrderBy(name => name, StringComparer.Ordinal)
+        var expectedKeys = expectedSystemKeys.OrderBy(key => key, StringComparer.Ordinal).ToArray();
+        var savedKeys = engine.SystemRandoms
+            .Select(snapshot => snapshot.SystemKey)
+            .OrderBy(key => key, StringComparer.Ordinal)
             .ToArray();
 
-        if (!expectedNames.SequenceEqual(savedNames, StringComparer.Ordinal))
+        if (!expectedKeys.SequenceEqual(savedKeys, StringComparer.Ordinal))
         {
             throw new InvalidDataException("Save file system RNGs do not match the registered systems.");
         }
 
-        EnsureUnique(engine.SystemRandoms.Select(snapshot => snapshot.SystemName), "Duplicate system RNG snapshots are not allowed.");
-        EnsureAscending(engine.SystemRandoms.Select(snapshot => snapshot.SystemName), StringComparer.Ordinal, "System RNG snapshots must be sorted by system name.");
+        EnsureUnique(engine.SystemRandoms.Select(snapshot => snapshot.SystemKey), "Duplicate system RNG snapshots are not allowed.");
+        EnsureAscending(engine.SystemRandoms.Select(snapshot => snapshot.SystemKey), StringComparer.Ordinal, "System RNG snapshots must be sorted by system key.");
 
         foreach (var systemRandom in engine.SystemRandoms)
         {
-            if (string.IsNullOrWhiteSpace(systemRandom.SystemName))
+            if (string.IsNullOrWhiteSpace(systemRandom.SystemKey))
             {
-                throw new InvalidDataException("System RNG snapshots require a system name.");
+                throw new InvalidDataException("System RNG snapshots require a system key.");
             }
 
-            ValidateRandomSnapshot(systemRandom.Random, $"system RNG '{systemRandom.SystemName}'");
+            ValidateRandomSnapshot(systemRandom.Random, $"system RNG '{systemRandom.SystemKey}'");
         }
 
-        ValidateState(engine.State);
+        ValidateState(engine.State, allowedSectionTypes);
     }
 
-    private static void ValidateState(SimulationStateSnapshot snapshot)
+    private static void ValidateState(SimulationStateSnapshot snapshot, IReadOnlyCollection<string> allowedSectionTypes)
     {
         var entities = snapshot.Entities ?? throw new InvalidDataException("Entity snapshot section was missing.");
         var relationships = snapshot.Relationships ?? throw new InvalidDataException("Relationship snapshot section was missing.");
@@ -317,7 +354,7 @@ internal static class SimulationSaveSerializer
 
         foreach (var section in componentSections)
         {
-            if (!string.Equals(section.SectionType, SimulationComponentSections.ProvinceComponent, StringComparison.Ordinal))
+            if (!allowedSectionTypes.Contains(section.SectionType))
             {
                 throw new InvalidDataException($"Unknown component section '{section.SectionType}'.");
             }
@@ -399,6 +436,21 @@ internal static class SimulationSaveSerializer
                 }
             }
         }
+    }
+
+    private static HashSet<string> BuildAllowedSectionTypes(IReadOnlyList<IComponentSectionCodec> codecs)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal)
+        {
+            SimulationComponentSections.ProvinceComponent,
+        };
+
+        foreach (var codec in codecs)
+        {
+            allowed.Add(codec.SectionType);
+        }
+
+        return allowed;
     }
 
     private static RandomSnapshot ToSnapshot((ulong s0, ulong s1, ulong s2, ulong s3) state)

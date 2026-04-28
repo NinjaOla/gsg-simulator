@@ -8,6 +8,7 @@ namespace SimEngine.ConsoleHost.Systems;
 public sealed class HeartbeatSystem : ISimulationSystem
 {
     public string Name => "Heartbeat";
+    public string Key => "Heartbeat";
     public TickCadence Cadence => TickCadence.Monthly;
     public int Order => 0;
     public IReadOnlyCollection<StateKey> Reads => [];

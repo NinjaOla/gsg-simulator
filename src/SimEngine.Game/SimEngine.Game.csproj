@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>SimEngine.Game</RootNamespace>
+    <AssemblyName>SimEngine.Game</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SimEngine.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SimEngine\SimEngine.csproj" />
+  </ItemGroup>
+</Project>
