@@ -23,7 +23,6 @@ public sealed class GameMetadataStateSectionCodec : IStateSectionCodec
         var entries = payload.Deserialize<GameMetadataEntrySnapshot[]>(options)
             ?? throw new InvalidDataException("Game metadata section payload was missing.");
 
-        state.Metadata.Clear();
         foreach (var entry in entries)
         {
             if (string.IsNullOrWhiteSpace(entry.Key))

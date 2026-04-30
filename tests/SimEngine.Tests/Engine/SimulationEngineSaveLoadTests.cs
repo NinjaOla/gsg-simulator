@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using SimEngine.Events;
 using SimEngine.Ids;
@@ -325,9 +326,9 @@ public sealed class SimulationEngineSaveLoadTests
 
     private sealed class TestMetadataStateSectionCodec : IStateSectionCodec
     {
-        public virtual string SectionType => "SimEngine.Tests.MetadataState";
+        public string SectionType => "SimEngine.Tests.MetadataState";
 
-        public virtual bool IsRequired => false;
+        public bool IsRequired => false;
 
         public JsonElement WriteSection(SimulationState state, JsonSerializerOptions options)
         {
@@ -343,7 +344,6 @@ public sealed class SimulationEngineSaveLoadTests
             var entries = payload.Deserialize<MetadataEntry[]>(options)
                 ?? throw new InvalidDataException("Metadata payload was missing.");
 
-            state.Metadata.Clear();
             foreach (var entry in entries)
             {
                 state.Metadata[entry.Key] = entry.Value;
@@ -351,9 +351,19 @@ public sealed class SimulationEngineSaveLoadTests
         }
     }
 
-    private sealed class RequiredTestMetadataStateSectionCodec : TestMetadataStateSectionCodec
+    private sealed class RequiredTestMetadataStateSectionCodec : IStateSectionCodec
     {
-        public override bool IsRequired => true;
+        private static readonly TestMetadataStateSectionCodec Inner = new();
+
+        public string SectionType => Inner.SectionType;
+
+        public bool IsRequired => true;
+
+        public JsonElement WriteSection(SimulationState state, JsonSerializerOptions options)
+            => Inner.WriteSection(state, options);
+
+        public void ReadSection(SimulationState state, JsonElement payload, JsonSerializerOptions options)
+            => Inner.ReadSection(state, payload, options);
     }
 
     private sealed record MetadataEntry(string Key, string Value);

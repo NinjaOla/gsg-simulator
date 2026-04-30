@@ -36,11 +36,13 @@ public sealed record GameManifest(
 
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["gameId"] = GameId,
-            ["scenarioId"] = ScenarioId,
-            ["contentVersion"] = ContentVersion,
-            ["contentHash"] = ContentHash,
-            ["enabledFeatures"] = string.Join(",", EnabledFeatures.OrderBy(feature => feature, StringComparer.Ordinal)),
+            [GameManifestMetadata.GameIdKey] = GameId,
+            [GameManifestMetadata.ScenarioIdKey] = ScenarioId,
+            [GameManifestMetadata.ContentVersionKey] = ContentVersion,
+            [GameManifestMetadata.ContentHashKey] = ContentHash,
+            [GameManifestMetadata.EnabledFeaturesKey] = string.Join(
+                GameManifestMetadata.FeatureSeparator,
+                EnabledFeatures.OrderBy(feature => feature, StringComparer.Ordinal)),
         };
     }
 }

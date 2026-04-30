@@ -10,6 +10,7 @@ internal static class GameSessionFactory
 {
     private const string DefaultContentVersion = "dev";
     private const string DefaultContentHash = "dev";
+    private const string SaveMetadataPropertyName = "saveMetadata";
 
     public static GameDefinition CreateDefinitionForWorld(string worldName) =>
         GameDefinition.CreateDefault(
@@ -49,7 +50,6 @@ internal static class GameSessionFactory
         ArgumentNullException.ThrowIfNull(session);
 
         var resolvedPath = SaveGamePaths.Resolve(path);
-        session.Engine.State.Metadata["worldName"] = session.WorldName;
         session.Engine.Save(resolvedPath);
         return resolvedPath;
     }
@@ -93,7 +93,8 @@ internal static class GameSessionFactory
         using var document = JsonDocument.Parse(stream);
 
         var root = document.RootElement;
-        if (!root.TryGetProperty("saveMetadata", out var saveMetadataElement) || saveMetadataElement.ValueKind != JsonValueKind.Array)
+        if (!root.TryGetProperty(SaveMetadataPropertyName, out var saveMetadataElement)
+            || saveMetadataElement.ValueKind != JsonValueKind.Array)
         {
             return CreateDefinitionForWorld("default");
         }
@@ -106,17 +107,17 @@ internal static class GameSessionFactory
             .Where(entry => !string.IsNullOrWhiteSpace(entry.Key) && entry.Value is not null)
             .ToDictionary(entry => entry.Key!, entry => entry.Value!, StringComparer.Ordinal);
 
-        if (!entries.TryGetValue("scenarioId", out var scenarioId))
+        if (!entries.TryGetValue(GameManifestMetadata.ScenarioIdKey, out var scenarioId))
         {
             scenarioId = "default";
         }
 
-        entries.TryGetValue("contentVersion", out var contentVersion);
-        entries.TryGetValue("contentHash", out var contentHash);
+        entries.TryGetValue(GameManifestMetadata.ContentVersionKey, out var contentVersion);
+        entries.TryGetValue(GameManifestMetadata.ContentHashKey, out var contentHash);
 
-        var enabledFeatures = entries.TryGetValue("enabledFeatures", out var featureCsv)
+        var enabledFeatures = entries.TryGetValue(GameManifestMetadata.EnabledFeaturesKey, out var featureCsv)
             && !string.IsNullOrWhiteSpace(featureCsv)
-            ? featureCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            ? featureCsv.Split(GameManifestMetadata.FeatureSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             : [];
 
         return GameDefinition.CreateDefault(
