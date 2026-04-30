@@ -4,6 +4,7 @@ using SimEngine.Events;
 using SimEngine.Ids;
 using SimEngine.State;
 using SimEngine.State.Components;
+using SimEngine.State.Serialization;
 using SimEngine.Systems;
 using SimEngine.Time;
 using Xunit;
@@ -132,6 +133,64 @@ public sealed class SimulationEngineSaveLoadTests
             SimulationEngine.Load(stream, [new DifferentKeyMutationSystem()]));
     }
 
+    [Fact]
+    public void SaveLoad_StateSectionCodec_RoundTripsNonComponentState()
+    {
+        var engine = CreateEngineWithStateSectionCodec(new TestMetadataStateSectionCodec());
+        engine.State.Metadata["migrationQueue"] = "A->B";
+
+        var json = SaveToJson(engine);
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var loaded = SimulationEngine.Load(
+            stream,
+            [new MutationSystem()],
+            stateSectionCodecs: [new TestMetadataStateSectionCodec()]);
+
+        Assert.True(loaded.State.Metadata.TryGetValue("migrationQueue", out var value));
+        Assert.Equal("A->B", value);
+        Assert.Equal(json, SaveToJson(loaded));
+    }
+
+    [Fact]
+    public void Load_MissingRequiredStateSection_ThrowsInvalidDataException()
+    {
+        var engine = CreateEngineWithStateSectionCodec(new TestMetadataStateSectionCodec());
+        var json = SaveToJson(engine);
+        var invalidJson = MutateJson(json, root =>
+        {
+            root["engine"]!["state"]!["stateSections"] = new JsonArray();
+        });
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(invalidJson));
+        Assert.Throws<InvalidDataException>(() =>
+            SimulationEngine.Load(
+                stream,
+                [new MutationSystem()],
+                stateSectionCodecs: [new RequiredTestMetadataStateSectionCodec()]));
+    }
+
+    [Fact]
+    public void Load_SaveMetadataMismatch_ThrowsInvalidDataException()
+    {
+        var engine = CreateEngineWithMetadata(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["gameId"] = "simengine.game",
+            ["scenarioId"] = "earth",
+        });
+
+        var json = SaveToJson(engine);
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        Assert.Throws<InvalidDataException>(() =>
+            SimulationEngine.Load(
+                stream,
+                [new MutationSystem()],
+                expectedSaveMetadata: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["gameId"] = "simengine.game",
+                    ["scenarioId"] = "mars",
+                }));
+    }
+
     private sealed class RenamedMutationSystem : ISimulationSystem
     {
         // Same Key as MutationSystem, different display Name.
@@ -157,6 +216,29 @@ public sealed class SimulationEngineSaveLoadTests
 
     private static SimulationEngine CreateEngine()
     {
+        return CreateEngineCore(
+            saveMetadata: new Dictionary<string, string>(StringComparer.Ordinal),
+            stateSectionCodecs: []);
+    }
+
+    private static SimulationEngine CreateEngineWithStateSectionCodec(IStateSectionCodec codec)
+    {
+        return CreateEngineCore(
+            saveMetadata: new Dictionary<string, string>(StringComparer.Ordinal),
+            stateSectionCodecs: [codec]);
+    }
+
+    private static SimulationEngine CreateEngineWithMetadata(IReadOnlyDictionary<string, string> metadata)
+    {
+        return CreateEngineCore(
+            saveMetadata: metadata,
+            stateSectionCodecs: []);
+    }
+
+    private static SimulationEngine CreateEngineCore(
+        IReadOnlyDictionary<string, string> saveMetadata,
+        IReadOnlyList<IStateSectionCodec> stateSectionCodecs)
+    {
         var state = new SimulationState();
         var alpha = state.Entities.Create();
         state.Entities.Attach(alpha, new ProvinceComponent("Alpha", Terrain.Land, 100, 200));
@@ -180,6 +262,8 @@ public sealed class SimulationEngineSaveLoadTests
                 DefaultTickDelta = TimeSpan.FromDays(1),
                 EnableParallelBatches = false,
                 InitialState = state,
+                SaveMetadata = saveMetadata,
+                StateSectionCodecs = stateSectionCodecs,
             },
             [new MutationSystem()]);
     }
@@ -238,4 +322,39 @@ public sealed class SimulationEngineSaveLoadTests
             ctx.Events.Publish(new MutationEvent(ctx.TickNumber, delta, province.CentroidLatE6));
         }
     }
+
+    private sealed class TestMetadataStateSectionCodec : IStateSectionCodec
+    {
+        public virtual string SectionType => "SimEngine.Tests.MetadataState";
+
+        public virtual bool IsRequired => false;
+
+        public JsonElement WriteSection(SimulationState state, JsonSerializerOptions options)
+        {
+            var entries = state.Metadata
+                .Select(entry => new MetadataEntry(entry.Key, entry.Value))
+                .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+                .ToArray();
+            return JsonSerializer.SerializeToElement(entries, options);
+        }
+
+        public void ReadSection(SimulationState state, JsonElement payload, JsonSerializerOptions options)
+        {
+            var entries = payload.Deserialize<MetadataEntry[]>(options)
+                ?? throw new InvalidDataException("Metadata payload was missing.");
+
+            state.Metadata.Clear();
+            foreach (var entry in entries)
+            {
+                state.Metadata[entry.Key] = entry.Value;
+            }
+        }
+    }
+
+    private sealed class RequiredTestMetadataStateSectionCodec : TestMetadataStateSectionCodec
+    {
+        public override bool IsRequired => true;
+    }
+
+    private sealed record MetadataEntry(string Key, string Value);
 }

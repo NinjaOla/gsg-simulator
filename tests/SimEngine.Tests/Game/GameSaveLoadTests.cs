@@ -1,8 +1,7 @@
 using System.Text;
+using SimEngine.Game;
 using SimEngine.Game.Components;
 using SimEngine.Game.Seeding;
-using SimEngine.Game.Serialization;
-using SimEngine.Game.Systems;
 using SimEngine.Ids;
 using SimEngine.State;
 using SimEngine.State.Components;
@@ -15,6 +14,10 @@ namespace SimEngine.Tests.Game;
 public sealed class GameSaveLoadTests
 {
     private static readonly DateTimeOffset StartDate = new(1836, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private static readonly GameDefinition Definition = GameDefinition.CreateDefault(
+        scenarioId: "test-scenario",
+        contentVersion: "test-v1",
+        contentHash: "hash-123");
 
     [Fact]
     public void SaveLoad_RoundTripsGameComponents()
@@ -33,6 +36,9 @@ public sealed class GameSaveLoadTests
 
         var (_, pop) = loaded.State.Entities.Query<PopulationComponent>().First();
         Assert.True(pop.Population > 1_000_000, "Population should have grown.");
+        Assert.True(loaded.State.Metadata.TryGetValue("worldName", out var worldName));
+        Assert.Equal("Alpha World", worldName);
+        Assert.Equal(Definition.SaveMetadata, loaded.Options.SaveMetadata);
     }
 
     [Fact]
@@ -75,6 +81,27 @@ public sealed class GameSaveLoadTests
         Assert.Equal(engine.TickNumber, loaded.TickNumber);
     }
 
+    [Fact]
+    public void Load_GameManifestMismatch_ThrowsInvalidDataException()
+    {
+        var engine = CreateGameEngine();
+        var json = SaveToJson(engine);
+
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var mismatchedDefinition = GameDefinition.CreateDefault(
+            scenarioId: "other-scenario",
+            contentVersion: "test-v1",
+            contentHash: "hash-123");
+
+        Assert.Throws<InvalidDataException>(() =>
+            SimulationEngine.Load(
+                stream,
+                CreateSystems(),
+                mismatchedDefinition.ComponentCodecs,
+                mismatchedDefinition.StateSectionCodecs,
+                mismatchedDefinition.SaveMetadata));
+    }
+
     private static SimulationEngine CreateGameEngine()
     {
         var state = new SimulationState();
@@ -87,6 +114,7 @@ public sealed class GameSaveLoadTests
         state.Adjacency = adjacencyBuilder.Build();
 
         GameWorldSeeder.Seed(state);
+        state.Metadata["worldName"] = "Alpha World";
 
         return new SimulationEngine(
             new SimulationEngineOptions
@@ -96,13 +124,14 @@ public sealed class GameSaveLoadTests
                 DefaultTickDelta = TimeSpan.FromDays(1),
                 EnableParallelBatches = false,
                 InitialState = state,
-                ComponentCodecs = GameCodecs.All,
+                ComponentCodecs = Definition.ComponentCodecs,
+                StateSectionCodecs = Definition.StateSectionCodecs,
+                SaveMetadata = Definition.SaveMetadata,
             },
             CreateSystems());
     }
 
-    private static ISimulationSystem[] CreateSystems() =>
-        [new PopulationSystem(), new EconomySystem()];
+    private static ISimulationSystem[] CreateSystems() => [..Definition.Systems];
 
     private static string SaveToJson(SimulationEngine engine)
     {
@@ -114,6 +143,11 @@ public sealed class GameSaveLoadTests
     private static SimulationEngine LoadFromJson(string json)
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
-        return SimulationEngine.Load(stream, CreateSystems(), GameCodecs.All);
+        return SimulationEngine.Load(
+            stream,
+            CreateSystems(),
+            Definition.ComponentCodecs,
+            Definition.StateSectionCodecs,
+            Definition.SaveMetadata);
     }
 }

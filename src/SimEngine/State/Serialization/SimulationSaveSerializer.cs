@@ -33,7 +33,9 @@ internal static class SimulationSaveSerializer
     public static SimulationEngine Load(
         Stream stream,
         IEnumerable<ISimulationSystem> systems,
-        IReadOnlyList<IComponentSectionCodec>? componentCodecs)
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs,
+        IReadOnlyList<IStateSectionCodec>? stateSectionCodecs,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(systems);
@@ -45,6 +47,7 @@ internal static class SimulationSaveSerializer
 
         var systemList = systems.ToArray();
         var codecs = componentCodecs ?? [];
+        var sectionCodecs = stateSectionCodecs ?? [];
         SimulationSaveFile? saveFile;
 
         try
@@ -61,8 +64,9 @@ internal static class SimulationSaveSerializer
             throw new InvalidDataException("Save file was empty.");
         }
 
-        var allowedSectionTypes = BuildAllowedSectionTypes(codecs);
-        ValidateSaveFile(saveFile, systemList, allowedSectionTypes);
+        var allowedComponentSectionTypes = BuildAllowedComponentSectionTypes(codecs);
+        var allowedStateSectionTypes = BuildAllowedStateSectionTypes(sectionCodecs);
+        ValidateSaveFile(saveFile, systemList, allowedComponentSectionTypes, allowedStateSectionTypes, expectedSaveMetadata);
 
         var engine = new SimulationEngine(
             new SimulationEngineOptions
@@ -73,7 +77,9 @@ internal static class SimulationSaveSerializer
                 EnableParallelBatches = saveFile.Engine.EnableParallelBatches,
                 MaxDegreeOfParallelism = saveFile.Engine.MaxDegreeOfParallelism,
                 ComponentCodecs = codecs,
-                InitialState = RestoreState(saveFile.Engine.State, codecs),
+                StateSectionCodecs = sectionCodecs,
+                SaveMetadata = ToMetadataDictionary(saveFile.SaveMetadata ?? []),
+                InitialState = RestoreState(saveFile.Engine.State, codecs, sectionCodecs),
             },
             systemList);
 
@@ -130,6 +136,18 @@ internal static class SimulationSaveSerializer
             .OrderBy(s => s.SectionType, StringComparer.Ordinal)
             .ToArray();
 
+        var stateSections = engine.Options.StateSectionCodecs
+            .Select(codec => new StateSectionSnapshot(
+                codec.SectionType,
+                codec.WriteSection(engine.State, JsonOptions)))
+            .OrderBy(s => s.SectionType, StringComparer.Ordinal)
+            .ToArray();
+
+        var saveMetadata = engine.Options.SaveMetadata
+            .Select(entry => new SaveMetadataEntrySnapshot(entry.Key, entry.Value))
+            .OrderBy(entry => entry.Key, StringComparer.Ordinal)
+            .ToArray();
+
         var saveFile = new SimulationSaveFile(
             CurrentFormatVersion,
             new EngineSnapshot(
@@ -150,16 +168,20 @@ internal static class SimulationSaveSerializer
                     entities,
                     relationships,
                     adjacency,
-                    componentSections)));
+                    componentSections,
+                    stateSections)),
+            saveMetadata);
 
-        var allowedSectionTypes = BuildAllowedSectionTypes(engine.Options.ComponentCodecs);
-        ValidateSaveFile(saveFile, engine.SystemKeys, allowedSectionTypes);
+        var allowedComponentSectionTypes = BuildAllowedComponentSectionTypes(engine.Options.ComponentCodecs);
+        var allowedStateSectionTypes = BuildAllowedStateSectionTypes(engine.Options.StateSectionCodecs);
+        ValidateSaveFile(saveFile, engine.SystemKeys, allowedComponentSectionTypes, allowedStateSectionTypes, expectedSaveMetadata: null);
         return saveFile;
     }
 
     private static SimulationState RestoreState(
         SimulationStateSnapshot snapshot,
-        IReadOnlyList<IComponentSectionCodec> codecs)
+        IReadOnlyList<IComponentSectionCodec> codecs,
+        IReadOnlyList<IStateSectionCodec> stateSectionCodecs)
     {
         var state = new SimulationState();
 
@@ -217,6 +239,27 @@ internal static class SimulationSaveSerializer
         }
 
         state.Adjacency = adjacencyBuilder.Build();
+
+        if (stateSectionCodecs.Count > 0)
+        {
+            var sectionsByType = (snapshot.StateSections ?? [])
+                .ToDictionary(s => s.SectionType, s => s, StringComparer.Ordinal);
+
+            foreach (var codec in stateSectionCodecs)
+            {
+                if (sectionsByType.TryGetValue(codec.SectionType, out var section))
+                {
+                    codec.ReadSection(state, section.Payload, JsonOptions);
+                    continue;
+                }
+
+                if (codec.IsRequired)
+                {
+                    throw new InvalidDataException($"Required state section '{codec.SectionType}' was missing.");
+                }
+            }
+        }
+
         return state;
     }
 
@@ -239,15 +282,24 @@ internal static class SimulationSaveSerializer
     private static void ValidateSaveFile(
         SimulationSaveFile saveFile,
         IEnumerable<ISimulationSystem> systems,
-        IReadOnlyCollection<string> allowedSectionTypes)
+        IReadOnlyCollection<string> allowedComponentSectionTypes,
+        IReadOnlyCollection<string> allowedStateSectionTypes,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata)
     {
-        ValidateSaveFile(saveFile, systems.Select(system => system.Key), allowedSectionTypes);
+        ValidateSaveFile(
+            saveFile,
+            systems.Select(system => system.Key),
+            allowedComponentSectionTypes,
+            allowedStateSectionTypes,
+            expectedSaveMetadata);
     }
 
     private static void ValidateSaveFile(
         SimulationSaveFile saveFile,
         IEnumerable<string> expectedSystemKeys,
-        IReadOnlyCollection<string> allowedSectionTypes)
+        IReadOnlyCollection<string> allowedComponentSectionTypes,
+        IReadOnlyCollection<string> allowedStateSectionTypes,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata)
     {
         if (saveFile.FormatVersion != CurrentFormatVersion)
         {
@@ -301,15 +353,20 @@ internal static class SimulationSaveSerializer
             ValidateRandomSnapshot(systemRandom.Random, $"system RNG '{systemRandom.SystemKey}'");
         }
 
-        ValidateState(engine.State, allowedSectionTypes);
+        ValidateSaveMetadata(saveFile.SaveMetadata ?? [], expectedSaveMetadata);
+        ValidateState(engine.State, allowedComponentSectionTypes, allowedStateSectionTypes);
     }
 
-    private static void ValidateState(SimulationStateSnapshot snapshot, IReadOnlyCollection<string> allowedSectionTypes)
+    private static void ValidateState(
+        SimulationStateSnapshot snapshot,
+        IReadOnlyCollection<string> allowedComponentSectionTypes,
+        IReadOnlyCollection<string> allowedStateSectionTypes)
     {
         var entities = snapshot.Entities ?? throw new InvalidDataException("Entity snapshot section was missing.");
         var relationships = snapshot.Relationships ?? throw new InvalidDataException("Relationship snapshot section was missing.");
         var adjacency = snapshot.Adjacency ?? throw new InvalidDataException("Adjacency snapshot section was missing.");
         var componentSections = snapshot.ComponentSections ?? throw new InvalidDataException("Component section snapshot was missing.");
+        var stateSections = snapshot.StateSections ?? [];
 
         EnsureAscending(entities.Select(entity => entity.Id), Comparer<uint>.Default, "Entity ids must be sorted ascending.");
         EnsureUnique(entities.Select(entity => entity.Id), "Duplicate entity ids are not allowed.");
@@ -354,9 +411,20 @@ internal static class SimulationSaveSerializer
 
         foreach (var section in componentSections)
         {
-            if (!allowedSectionTypes.Contains(section.SectionType))
+            if (!allowedComponentSectionTypes.Contains(section.SectionType))
             {
                 throw new InvalidDataException($"Unknown component section '{section.SectionType}'.");
+            }
+        }
+
+        EnsureAscending(stateSections.Select(section => section.SectionType), StringComparer.Ordinal, "State sections must be sorted by section type.");
+        EnsureUnique(stateSections.Select(section => section.SectionType), "Duplicate state sections are not allowed.");
+
+        foreach (var section in stateSections)
+        {
+            if (!allowedStateSectionTypes.Contains(section.SectionType))
+            {
+                throw new InvalidDataException($"Unknown state section '{section.SectionType}'.");
             }
         }
 
@@ -438,7 +506,7 @@ internal static class SimulationSaveSerializer
         }
     }
 
-    private static HashSet<string> BuildAllowedSectionTypes(IReadOnlyList<IComponentSectionCodec> codecs)
+    private static HashSet<string> BuildAllowedComponentSectionTypes(IReadOnlyList<IComponentSectionCodec> codecs)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -451,6 +519,59 @@ internal static class SimulationSaveSerializer
         }
 
         return allowed;
+    }
+
+    private static HashSet<string> BuildAllowedStateSectionTypes(IReadOnlyList<IStateSectionCodec> codecs)
+    {
+        var allowed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var codec in codecs)
+        {
+            allowed.Add(codec.SectionType);
+        }
+
+        return allowed;
+    }
+
+    private static Dictionary<string, string> ToMetadataDictionary(IEnumerable<SaveMetadataEntrySnapshot> metadataEntries)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in metadataEntries)
+        {
+            result.Add(entry.Key, entry.Value);
+        }
+
+        return result;
+    }
+
+    private static void ValidateSaveMetadata(
+        SaveMetadataEntrySnapshot[] metadataEntries,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata)
+    {
+        EnsureAscending(metadataEntries.Select(entry => entry.Key), StringComparer.Ordinal, "Save metadata keys must be sorted ascending.");
+        EnsureUnique(metadataEntries.Select(entry => entry.Key), "Duplicate save metadata keys are not allowed.");
+
+        foreach (var entry in metadataEntries)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Key))
+            {
+                throw new InvalidDataException("Save metadata keys cannot be blank.");
+            }
+        }
+
+        if (expectedSaveMetadata is null || expectedSaveMetadata.Count == 0)
+        {
+            return;
+        }
+
+        var metadata = ToMetadataDictionary(metadataEntries);
+        foreach (var expected in expectedSaveMetadata)
+        {
+            if (!metadata.TryGetValue(expected.Key, out var savedValue)
+                || !string.Equals(savedValue, expected.Value, StringComparison.Ordinal))
+            {
+                throw new InvalidDataException($"Save metadata mismatch for key '{expected.Key}'.");
+            }
+        }
     }
 
     private static RandomSnapshot ToSnapshot((ulong s0, ulong s1, ulong s2, ulong s3) state)
