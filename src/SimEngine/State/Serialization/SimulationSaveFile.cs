@@ -9,7 +9,8 @@ internal static class SimulationComponentSections
 
 internal sealed record SimulationSaveFile(
     int FormatVersion,
-    EngineSnapshot Engine);
+    EngineSnapshot Engine,
+    SaveMetadataEntrySnapshot[]? SaveMetadata);
 
 internal sealed record EngineSnapshot(
     DateTimeOffset StartDate,
@@ -38,7 +39,8 @@ internal sealed record SimulationStateSnapshot(
     EntitySnapshot[] Entities,
     RelationshipSnapshot[] Relationships,
     AdjacencyNodeSnapshot[] Adjacency,
-    ComponentSectionSnapshot[] ComponentSections);
+    ComponentSectionSnapshot[] ComponentSections,
+    StateSectionSnapshot[]? StateSections);
 
 internal sealed record EntitySnapshot(uint Id);
 
@@ -54,6 +56,14 @@ internal sealed record AdjacencyNodeSnapshot(
 internal sealed record ComponentSectionSnapshot(
     string SectionType,
     JsonElement Payload);
+
+internal sealed record StateSectionSnapshot(
+    string SectionType,
+    JsonElement Payload);
+
+internal sealed record SaveMetadataEntrySnapshot(
+    string Key,
+    string Value);
 
 internal sealed record ProvinceComponentEntrySnapshot(
     uint EntityId,

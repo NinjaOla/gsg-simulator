@@ -36,4 +36,17 @@ public sealed class SimulationEngineOptions
     /// save file. Order does not matter; section types must be unique.
     /// </summary>
     public IReadOnlyList<IComponentSectionCodec> ComponentCodecs { get; init; } = [];
+
+    /// <summary>
+    /// Pluggable codecs for additional non-component state sections.
+    /// </summary>
+    public IReadOnlyList<IStateSectionCodec> StateSectionCodecs { get; init; } = [];
+
+    /// <summary>
+    /// Optional save metadata owned by the game layer (for example game/scenario
+    /// identity and content hashes). The engine persists this data but does not
+    /// interpret it.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> SaveMetadata { get; init; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 }

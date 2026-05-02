@@ -104,7 +104,9 @@ public sealed class SimulationEngine
     public static SimulationEngine Load(
         string path,
         IEnumerable<ISimulationSystem> systems,
-        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null)
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null,
+        IReadOnlyList<IStateSectionCodec>? stateSectionCodecs = null,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -112,15 +114,17 @@ public sealed class SimulationEngine
         }
 
         using var stream = new FileStream(Path.GetFullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read);
-        return Load(stream, systems, componentCodecs);
+        return Load(stream, systems, componentCodecs, stateSectionCodecs, expectedSaveMetadata);
     }
 
     /// <summary>Loads a full deterministic engine snapshot from a JSON stream.</summary>
     public static SimulationEngine Load(
         Stream stream,
         IEnumerable<ISimulationSystem> systems,
-        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null)
-        => SimulationSaveSerializer.Load(stream, systems, componentCodecs);
+        IReadOnlyList<IComponentSectionCodec>? componentCodecs = null,
+        IReadOnlyList<IStateSectionCodec>? stateSectionCodecs = null,
+        IReadOnlyDictionary<string, string>? expectedSaveMetadata = null)
+        => SimulationSaveSerializer.Load(stream, systems, componentCodecs, stateSectionCodecs, expectedSaveMetadata);
 
     public void Step(CancellationToken ct = default) => Step(Options.DefaultTickDelta, ct);
 

@@ -16,6 +16,12 @@ public sealed class SimulationState
     public RelationshipGraph Relationships { get; }
 
     /// <summary>
+    /// Arbitrary key/value metadata owned by the game layer. The engine does not
+    /// interpret these values.
+    /// </summary>
+    public IDictionary<string, string> Metadata { get; }
+
+    /// <summary>
     /// Province adjacency graph. Defaults to <see cref="AdjacencyGraph.Empty"/>
     /// so an engine with no world loaded still has a valid graph to query.
     /// Replaced wholesale by world loaders — never mutated in place.
@@ -33,6 +39,7 @@ public sealed class SimulationState
 
         Entities = new EntityStore();
         Relationships = new RelationshipGraph();
+        Metadata = new Dictionary<string, string>(StringComparer.Ordinal);
         Adjacency = adjacency;
     }
 }

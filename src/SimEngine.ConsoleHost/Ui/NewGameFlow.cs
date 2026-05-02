@@ -73,7 +73,8 @@ public static class NewGameFlow
             return null;
         }
 
-        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName);
+        var definition = GameSessionFactory.CreateDefinitionForWorld(world.DisplayName);
+        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName, definition);
 
         AnsiConsole.MarkupLine(
             $"[green]Ready.[/] {session.ProvinceCount} provinces, {session.AdjacencyEdgeCount} borders.");
