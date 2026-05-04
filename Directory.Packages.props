@@ -8,6 +8,11 @@
     <PackageVersion Include="xunit.v3" Version="1.0.1" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.0.1" />
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
+    <PackageVersion Include="Microsoft.Orleans.Client" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Orleans.Sdk" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Orleans.Server" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Orleans.Streaming" Version="10.1.0" />
+    <PackageVersion Include="Microsoft.Orleans.TestingHost" Version="10.1.0" />
     <PackageVersion Include="NetTopologySuite" Version="2.6.0" />
     <PackageVersion Include="NetTopologySuite.IO.GeoJSON" Version="4.0.0" />
     <PackageVersion Include="Spectre.Console" Version="0.49.1" />

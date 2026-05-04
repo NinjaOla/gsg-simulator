@@ -1,3 +1,4 @@
+using SimEngine.Contracts;
 using Spectre.Console;
 
 namespace SimEngine.ConsoleHost.Game.Commands;
@@ -22,6 +23,48 @@ public sealed class StepCommand : ICommand
 
         var before = session.Engine.Time.GetUtcNow();
 
+        if (session.Grain is { } grain)
+        {
+            ExecuteViaGrain(grain, ticks);
+        }
+        else
+        {
+            ExecuteLocal(session, ticks);
+        }
+
+        var after = session.Engine.Time.GetUtcNow();
+        AnsiConsole.MarkupLine(
+            $"[green]{before:yyyy-MM-dd}[/] [dim]->[/] [bold gold1]{after:yyyy-MM-dd}[/]  " +
+            $"[dim](+{ticks} tick{(ticks == 1 ? "" : "s")})[/]");
+    }
+
+    private static void ExecuteViaGrain(IGameSessionGrain grain, int ticks)
+    {
+        if (ticks > ProgressThreshold)
+        {
+            AnsiConsole.Progress()
+                .AutoClear(true)
+                .HideCompleted(true)
+                .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
+                .Start(ctx =>
+                {
+                    var task = ctx.AddTask($"Simulating {ticks} ticks", maxValue: ticks);
+                    for (int i = 0; i < ticks; i++)
+                    {
+                        grain.StepAsync().GetAwaiter().GetResult();
+                        task.Increment(1);
+                    }
+                });
+        }
+        else
+        {
+            for (int i = 0; i < ticks; i++)
+                grain.StepAsync().GetAwaiter().GetResult();
+        }
+    }
+
+    private static void ExecuteLocal(GameSession session, int ticks)
+    {
         if (ticks > ProgressThreshold)
         {
             AnsiConsole.Progress()
@@ -43,11 +86,6 @@ public sealed class StepCommand : ICommand
             for (int i = 0; i < ticks; i++)
                 session.Engine.Step();
         }
-
-        var after = session.Engine.Time.GetUtcNow();
-        AnsiConsole.MarkupLine(
-            $"[green]{before:yyyy-MM-dd}[/] [dim]->[/] [bold gold1]{after:yyyy-MM-dd}[/]  " +
-            $"[dim](+{ticks} tick{(ticks == 1 ? "" : "s")})[/]");
     }
 
     private static int ParseTicks(string[] args) =>

@@ -3,7 +3,7 @@ using SimEngine.ConsoleHost.Ui;
 
 internal static class App
 {
-    internal static void Run()
+    internal static void Run(IServiceProvider services)
     {
         while (true)
         {
@@ -11,8 +11,8 @@ internal static class App
 
             GameSession? session = choice switch
             {
-                MainMenuChoice.NewGame => NewGameFlow.Run(),
-                MainMenuChoice.LoadGame => LoadGameFlow.Run(),
+                MainMenuChoice.NewGame => NewGameFlow.Run(services),
+                MainMenuChoice.LoadGame => LoadGameFlow.Run(services),
                 MainMenuChoice.Quit => null,
                 _ => null,
             };

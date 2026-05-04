@@ -14,13 +14,17 @@
     <File Path="README.md" />
   </Folder>
   <Folder Name="/src/">
+    <Project Path="src/SimEngine.Client/SimEngine.Client.csproj" />
     <Project Path="src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj" />
+    <Project Path="src/SimEngine.Contracts/SimEngine.Contracts.csproj" />
     <Project Path="src/SimEngine.Game/SimEngine.Game.csproj">
       <Build Solution="Debug|*" Project="false" />
     </Project>
+    <Project Path="src/SimEngine.Server/SimEngine.Server.csproj" />
     <Project Path="src/SimEngine/SimEngine.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SimEngine.Server.Tests/SimEngine.Server.Tests.csproj" />
     <Project Path="tests/SimEngine.Tests/SimEngine.Tests.csproj" />
   </Folder>
   <Folder Name="/docs/">

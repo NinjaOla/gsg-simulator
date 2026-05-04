@@ -1,7 +1,10 @@
 using SimEngine.ConsoleHost.Systems;
+using SimEngine.Contracts;
 using SimEngine.Game;
+using SimEngine.Server;
 using SimEngine.State;
 using SimEngine.Systems;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 
 namespace SimEngine.ConsoleHost.Game;
@@ -23,7 +26,8 @@ internal static class GameSessionFactory
         DateTimeOffset startDate,
         ulong seed,
         string worldName,
-        GameDefinition definition)
+        GameDefinition definition,
+        IServiceProvider? services = null)
     {
         ArgumentNullException.ThrowIfNull(state);
         ArgumentException.ThrowIfNullOrWhiteSpace(worldName);
@@ -42,7 +46,19 @@ internal static class GameSessionFactory
             },
             CreateSystems(definition));
 
-        return new GameSession(engine, worldName, definition);
+        var sessionId = Guid.NewGuid().ToString("N");
+        IGameSessionGrain? grain = null;
+
+        if (services is not null)
+        {
+            var engineProvider = services.GetService<ILocalEngineProvider>();
+            engineProvider?.Register(sessionId, engine);
+
+            var client = services.GetService<IClusterClient>();
+            grain = client?.GetGrain<IGameSessionGrain>(sessionId);
+        }
+
+        return new GameSession(engine, worldName, definition, sessionId, grain);
     }
 
     public static string Save(GameSession session, string path)
@@ -54,14 +70,14 @@ internal static class GameSessionFactory
         return resolvedPath;
     }
 
-    public static GameSession Load(string path)
+    public static GameSession Load(string path, IServiceProvider? services = null)
     {
         var resolvedPath = SaveGamePaths.Resolve(path);
         var definition = CreateDefinitionFromSave(resolvedPath);
-        return Load(resolvedPath, definition);
+        return Load(resolvedPath, definition, services);
     }
 
-    public static GameSession Load(string path, GameDefinition definition)
+    public static GameSession Load(string path, GameDefinition definition, IServiceProvider? services = null)
     {
         ArgumentNullException.ThrowIfNull(definition);
 
@@ -78,7 +94,19 @@ internal static class GameSessionFactory
             ? savedWorldName
             : SaveGamePaths.GetDisplayName(resolvedPath);
 
-        return new GameSession(engine, worldName, definition);
+        var sessionId = Guid.NewGuid().ToString("N");
+        IGameSessionGrain? grain = null;
+
+        if (services is not null)
+        {
+            var engineProvider = services.GetService<ILocalEngineProvider>();
+            engineProvider?.Register(sessionId, engine);
+
+            var client = services.GetService<IClusterClient>();
+            grain = client?.GetGrain<IGameSessionGrain>(sessionId);
+        }
+
+        return new GameSession(engine, worldName, definition, sessionId, grain);
     }
 
     private static ISimulationSystem[] CreateSystems(GameDefinition definition) =>

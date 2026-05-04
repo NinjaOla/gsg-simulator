@@ -5,7 +5,7 @@ namespace SimEngine.ConsoleHost.Ui;
 
 public static class LoadGameFlow
 {
-    public static GameSession? Run()
+    public static GameSession? Run(IServiceProvider services)
     {
         AnsiConsole.Clear();
         AnsiConsole.Write(new Rule("[bold]Load Game[/]").RuleStyle("dim grey"));
@@ -24,7 +24,7 @@ public static class LoadGameFlow
                 .Spinner(Spinner.Known.Dots)
                 .Start($"Loading {Markup.Escape(path)}...", _ =>
                 {
-                    session = GameSessionFactory.Load(path);
+                    session = GameSessionFactory.Load(path, services);
                 });
 
             if (session is null)

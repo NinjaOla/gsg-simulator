@@ -1,5 +1,6 @@
 using SimEngine;
 using SimEngine.ConsoleHost.Events;
+using SimEngine.Contracts;
 using SimEngine.Game;
 using SimEngine.State.Components;
 
@@ -13,8 +14,10 @@ public sealed class GameSession : IDisposable
     private readonly List<IDisposable> _subscriptions = [];
 
     public SimulationEngine Engine { get; }
+    public IGameSessionGrain? Grain { get; }
     public GameDefinition Definition { get; }
     public string WorldName { get; }
+    public string SessionId { get; }
     public bool ShouldQuit { get; set; }
     internal GameSession? ReplacementSession { get; private set; }
 
@@ -22,7 +25,7 @@ public sealed class GameSession : IDisposable
     public int AdjacencyEdgeCount => Engine.State.Adjacency.EdgeCount;
     public IReadOnlyList<string> EventLog => _eventLog;
 
-    public GameSession(SimulationEngine engine, string worldName, GameDefinition definition)
+    public GameSession(SimulationEngine engine, string worldName, GameDefinition definition, string sessionId = "", IGameSessionGrain? grain = null)
     {
         ArgumentNullException.ThrowIfNull(engine);
         ArgumentException.ThrowIfNullOrWhiteSpace(worldName);
@@ -31,6 +34,8 @@ public sealed class GameSession : IDisposable
         Engine = engine;
         WorldName = worldName;
         Definition = definition;
+        SessionId = sessionId;
+        Grain = grain;
 
         _subscriptions.Add(engine.Events.Subscribe<HeartbeatEvent>(e =>
             AddLog($"[dim]{e.Date:yyyy-MM-dd}[/]  Heartbeat — [bold]{e.EntityCount}[/] entities")));

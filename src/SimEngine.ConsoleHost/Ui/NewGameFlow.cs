@@ -10,7 +10,7 @@ namespace SimEngine.ConsoleHost.Ui;
 
 public static class NewGameFlow
 {
-    public static GameSession? Run()
+    public static GameSession? Run(IServiceProvider services)
     {
         AnsiConsole.Clear();
         AnsiConsole.Write(new Rule("[bold]New Game[/]").RuleStyle("dim grey"));
@@ -74,7 +74,7 @@ public static class NewGameFlow
         }
 
         var definition = GameSessionFactory.CreateDefinitionForWorld(world.DisplayName);
-        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName, definition);
+        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName, definition, services);
 
         AnsiConsole.MarkupLine(
             $"[green]Ready.[/] {session.ProvinceCount} provinces, {session.AdjacencyEdgeCount} borders.");
