@@ -1,64 +1,35 @@
-using SimEngine.ConsoleHost.Systems;
-using SimEngine.Contracts;
-using SimEngine.Game;
-using SimEngine.Server;
-using SimEngine.State;
-using SimEngine.Systems;
 using Microsoft.Extensions.DependencyInjection;
-using System.Text.Json;
+using SimEngine.Contracts;
+using SimEngine.Server;
 
 namespace SimEngine.ConsoleHost.Game;
 
+/// <summary>
+/// Creates <see cref="GameSession"/> handles by driving the in-process
+/// session grain. The grain owns the engine; the factory fetches the
+/// read-only view from <see cref="ILocalEngineProvider"/> after the grain
+/// has initialized.
+/// </summary>
 internal static class GameSessionFactory
 {
-    private const string DefaultContentVersion = "dev";
-    private const string DefaultContentHash = "dev";
-    private const string SaveMetadataPropertyName = "saveMetadata";
-
-    public static GameDefinition CreateDefinitionForWorld(string worldName) =>
-        GameDefinition.CreateDefault(
-            scenarioId: worldName,
-            contentVersion: DefaultContentVersion,
-            contentHash: DefaultContentHash);
-
     public static GameSession CreateNew(
-        SimulationState state,
+        IServiceProvider services,
+        string worldId,
         DateTimeOffset startDate,
-        ulong seed,
-        string worldName,
-        GameDefinition definition,
-        IServiceProvider? services = null)
+        ulong seed)
     {
-        ArgumentNullException.ThrowIfNull(state);
-        ArgumentException.ThrowIfNullOrWhiteSpace(worldName);
-        ArgumentNullException.ThrowIfNull(definition);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(worldId);
 
-        state.Metadata["worldName"] = worldName;
-        var engine = new SimulationEngine(
-            new SimulationEngineOptions
-            {
-                StartDate = startDate,
-                Seed = seed,
-                InitialState = state,
-                ComponentCodecs = definition.ComponentCodecs,
-                StateSectionCodecs = definition.StateSectionCodecs,
-                SaveMetadata = definition.SaveMetadata,
-            },
-            CreateSystems(definition));
+        return Create(services, grain => grain.InitializeAsync(worldId, startDate, seed));
+    }
 
-        var sessionId = Guid.NewGuid().ToString("N");
-        IGameSessionGrain? grain = null;
+    public static GameSession Load(string path, IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
 
-        if (services is not null)
-        {
-            var engineProvider = services.GetService<ILocalEngineProvider>();
-            engineProvider?.Register(sessionId, engine);
-
-            var client = services.GetService<IClusterClient>();
-            grain = client?.GetGrain<IGameSessionGrain>(sessionId);
-        }
-
-        return new GameSession(engine, worldName, definition, sessionId, grain);
+        var resolvedPath = SaveGamePaths.Resolve(path);
+        return Create(services, grain => grain.InitializeFromSaveAsync(resolvedPath));
     }
 
     public static string Save(GameSession session, string path)
@@ -66,92 +37,26 @@ internal static class GameSessionFactory
         ArgumentNullException.ThrowIfNull(session);
 
         var resolvedPath = SaveGamePaths.Resolve(path);
-        session.Engine.Save(resolvedPath);
-        return resolvedPath;
+        return session.Grain.SaveAsync(resolvedPath).GetAwaiter().GetResult();
     }
 
-    public static GameSession Load(string path, IServiceProvider? services = null)
+    private static GameSession Create(
+        IServiceProvider services,
+        Func<IGameSessionGrain, Task<SessionInfo>> initialize)
     {
-        var resolvedPath = SaveGamePaths.Resolve(path);
-        var definition = CreateDefinitionFromSave(resolvedPath);
-        return Load(resolvedPath, definition, services);
-    }
-
-    public static GameSession Load(string path, GameDefinition definition, IServiceProvider? services = null)
-    {
-        ArgumentNullException.ThrowIfNull(definition);
-
-        var resolvedPath = SaveGamePaths.Resolve(path);
-        var engine = SimulationEngine.Load(
-            resolvedPath,
-            CreateSystems(definition),
-            definition.ComponentCodecs,
-            definition.StateSectionCodecs,
-            definition.SaveMetadata);
-
-        var worldName = engine.State.Metadata.TryGetValue("worldName", out var savedWorldName)
-            && !string.IsNullOrWhiteSpace(savedWorldName)
-            ? savedWorldName
-            : SaveGamePaths.GetDisplayName(resolvedPath);
+        var client = services.GetRequiredService<IClusterClient>();
+        var engineProvider = services.GetRequiredService<ILocalEngineProvider>();
 
         var sessionId = Guid.NewGuid().ToString("N");
-        IGameSessionGrain? grain = null;
+        var grain = client.GetGrain<IGameSessionGrain>(sessionId);
 
-        if (services is not null)
-        {
-            var engineProvider = services.GetService<ILocalEngineProvider>();
-            engineProvider?.Register(sessionId, engine);
+        // Console host is sync throughout; blocking here is safe (no sync context).
+        var info = initialize(grain).GetAwaiter().GetResult();
 
-            var client = services.GetService<IClusterClient>();
-            grain = client?.GetGrain<IGameSessionGrain>(sessionId);
-        }
+        var engine = engineProvider.GetEngine(sessionId)
+            ?? throw new InvalidOperationException(
+                $"Session '{sessionId}' has no in-process engine. The console host requires the silo to run in-process.");
 
-        return new GameSession(engine, worldName, definition, sessionId, grain);
-    }
-
-    private static ISimulationSystem[] CreateSystems(GameDefinition definition) =>
-    [
-        new HeartbeatSystem(),
-        ..definition.Systems,
-    ];
-
-    private static GameDefinition CreateDefinitionFromSave(string resolvedPath)
-    {
-        using var stream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        using var document = JsonDocument.Parse(stream);
-
-        var root = document.RootElement;
-        if (!root.TryGetProperty(SaveMetadataPropertyName, out var saveMetadataElement)
-            || saveMetadataElement.ValueKind != JsonValueKind.Array)
-        {
-            return CreateDefinitionForWorld("default");
-        }
-
-        var entries = saveMetadataElement.EnumerateArray()
-            .Where(element => element.ValueKind == JsonValueKind.Object)
-            .Select(element => (
-                Key: element.TryGetProperty("key", out var key) ? key.GetString() : null,
-                Value: element.TryGetProperty("value", out var value) ? value.GetString() : null))
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.Key) && entry.Value is not null)
-            .ToDictionary(entry => entry.Key!, entry => entry.Value!, StringComparer.Ordinal);
-
-        if (!entries.TryGetValue(GameManifestMetadata.ScenarioIdKey, out var scenarioId))
-        {
-            scenarioId = "default";
-        }
-
-        entries.TryGetValue(GameManifestMetadata.ContentVersionKey, out var contentVersion);
-        entries.TryGetValue(GameManifestMetadata.ContentHashKey, out var contentHash);
-
-        var enabledFeatures = entries.TryGetValue(GameManifestMetadata.EnabledFeaturesKey, out var featureCsv)
-            && !string.IsNullOrWhiteSpace(featureCsv)
-            ? featureCsv.Split(GameManifestMetadata.FeatureSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            : [];
-
-        return GameDefinition.CreateDefault(
-            scenarioId: scenarioId,
-            contentVersion: string.IsNullOrWhiteSpace(contentVersion) ? DefaultContentVersion : contentVersion,
-            contentHash: string.IsNullOrWhiteSpace(contentHash) ? DefaultContentHash : contentHash,
-            enabledFeatures: enabledFeatures);
+        return new GameSession(engine, grain, info.WorldName, sessionId, services);
     }
 }

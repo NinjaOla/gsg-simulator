@@ -91,9 +91,9 @@ public sealed class LoadCommand : ICommand
 
         try
         {
-            session.ReplaceWith(GameSessionFactory.Load(args[0]));
+            session.ReplaceWith(GameSessionFactory.Load(args[0], session.Services));
         }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
         {
             AnsiConsole.MarkupLine($"[red]Could not load save:[/] {Markup.Escape(ex.Message)}");
         }

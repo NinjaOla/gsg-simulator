@@ -20,11 +20,20 @@ public static class SimEngineServerExtensions
             silo.UseLocalhostClustering();
         });
 
-        builder.ConfigureServices(services =>
-        {
-            services.AddSingleton<ILocalEngineProvider, LocalEngineProvider>();
-        });
+        builder.ConfigureServices(services => services.AddSimEngineServer());
 
         return builder;
+    }
+
+    /// <summary>
+    /// Registers SimEngine server services on an existing service collection.
+    /// Used by <see cref="UseSimEngineSilo"/> and by test silo configurators.
+    /// </summary>
+    public static IServiceCollection AddSimEngineServer(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.AddSingleton<ILocalEngineProvider, LocalEngineProvider>();
+        return services;
     }
 }
