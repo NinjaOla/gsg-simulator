@@ -1,9 +1,6 @@
 using System.Globalization;
 using SimEngine.ConsoleHost.Game;
-using SimEngine.Game.Seeding;
-using SimEngine.State;
-using SimEngine.State.Loading;
-using SimEngine.State.Loading.GeoJson;
+using SimEngine.Server.Worlds;
 using Spectre.Console;
 
 namespace SimEngine.ConsoleHost.Ui;
@@ -17,14 +14,15 @@ public static class NewGameFlow
         AnsiConsole.WriteLine();
 
         var world = AnsiConsole.Prompt(
-            new SelectionPrompt<WorldAsset>()
+            new SelectionPrompt<WorldAssetInfo>()
                 .Title("Select a world:")
                 .UseConverter(w => w.DisplayName)
-                .AddChoices(WorldAsset.All));
+                .AddChoices(WorldCatalog.All));
 
-        if (!File.Exists(world.FullPath))
+        var worldPath = WorldCatalog.ResolvePath(world);
+        if (!File.Exists(worldPath))
         {
-            AnsiConsole.MarkupLine($"[red]World file not found:[/] {world.FullPath}");
+            AnsiConsole.MarkupLine($"[red]World file not found:[/] {worldPath}");
             AnsiConsole.MarkupLine("[dim]Press any key.[/]");
             Console.ReadKey(intercept: true);
             return null;
@@ -56,31 +54,34 @@ public static class NewGameFlow
         AnsiConsole.MarkupLine($"[dim]Seed: {seed}[/]");
         AnsiConsole.WriteLine();
 
-        SimulationState? state = null;
-        AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .Start($"Loading {world.DisplayName}...", _ =>
-            {
-                var loader = new GeoJsonWorldLoader();
-                state = WorldLoaders.LoadIntoState(loader, world.FullPath);
-                GameWorldSeeder.Seed(state);
-            });
-
-        if (state is null)
+        try
         {
-            AnsiConsole.MarkupLine("[red]Failed to load world.[/]");
+            GameSession? session = null;
+            AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .Start($"Loading {world.DisplayName}...", _ =>
+                {
+                    session = GameSessionFactory.CreateNew(services, world.WorldId, startDate, seed);
+                });
+
+            if (session is null)
+            {
+                throw new InvalidOperationException("Initialization did not produce a game session.");
+            }
+
+            AnsiConsole.MarkupLine(
+                $"[green]Ready.[/] {session.ProvinceCount} provinces, {session.AdjacencyEdgeCount} borders.");
+            AnsiConsole.MarkupLine("[dim]Press any key to start.[/]");
+            Console.ReadKey(intercept: true);
+
+            return session;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or ArgumentException or InvalidOperationException)
+        {
+            AnsiConsole.MarkupLine($"[red]Could not start game:[/] {Markup.Escape(ex.Message)}");
+            AnsiConsole.MarkupLine("[dim]Press any key.[/]");
             Console.ReadKey(intercept: true);
             return null;
         }
-
-        var definition = GameSessionFactory.CreateDefinitionForWorld(world.DisplayName);
-        var session = GameSessionFactory.CreateNew(state, startDate, seed, world.DisplayName, definition, services);
-
-        AnsiConsole.MarkupLine(
-            $"[green]Ready.[/] {session.ProvinceCount} provinces, {session.AdjacencyEdgeCount} borders.");
-        AnsiConsole.MarkupLine("[dim]Press any key to start.[/]");
-        Console.ReadKey(intercept: true);
-
-        return session;
     }
 }

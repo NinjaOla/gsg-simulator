@@ -6,6 +6,7 @@ namespace SimEngine.ConsoleHost.Game.Commands;
 public sealed class StepCommand : ICommand
 {
     private const int ProgressThreshold = 50;
+    private const int ProgressChunkTicks = 25;
 
     public string Name => "step";
     public string[] Aliases => ["s"];
@@ -22,70 +23,49 @@ public sealed class StepCommand : ICommand
         }
 
         var before = session.Engine.Time.GetUtcNow();
+        var executed = ticks > ProgressThreshold
+            ? StepWithProgress(session.Grain, ticks)
+            : Step(session.Grain, ticks);
 
-        if (session.Grain is { } grain)
+        if (executed == 0)
         {
-            ExecuteViaGrain(grain, ticks);
-        }
-        else
-        {
-            ExecuteLocal(session, ticks);
+            AnsiConsole.MarkupLine("[yellow]Simulation is paused.[/] No ticks executed.");
+            return;
         }
 
         var after = session.Engine.Time.GetUtcNow();
         AnsiConsole.MarkupLine(
             $"[green]{before:yyyy-MM-dd}[/] [dim]->[/] [bold gold1]{after:yyyy-MM-dd}[/]  " +
-            $"[dim](+{ticks} tick{(ticks == 1 ? "" : "s")})[/]");
+            $"[dim](+{executed} tick{(executed == 1 ? "" : "s")})[/]");
     }
 
-    private static void ExecuteViaGrain(IGameSessionGrain grain, int ticks)
-    {
-        if (ticks > ProgressThreshold)
-        {
-            AnsiConsole.Progress()
-                .AutoClear(true)
-                .HideCompleted(true)
-                .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
-                .Start(ctx =>
-                {
-                    var task = ctx.AddTask($"Simulating {ticks} ticks", maxValue: ticks);
-                    for (int i = 0; i < ticks; i++)
-                    {
-                        grain.StepAsync().GetAwaiter().GetResult();
-                        task.Increment(1);
-                    }
-                });
-        }
-        else
-        {
-            for (int i = 0; i < ticks; i++)
-                grain.StepAsync().GetAwaiter().GetResult();
-        }
-    }
+    private static int Step(IGameSessionGrain grain, int ticks) =>
+        grain.StepAsync(ticks).GetAwaiter().GetResult().TicksExecuted;
 
-    private static void ExecuteLocal(GameSession session, int ticks)
+    private static int StepWithProgress(IGameSessionGrain grain, int ticks)
     {
-        if (ticks > ProgressThreshold)
-        {
-            AnsiConsole.Progress()
-                .AutoClear(true)
-                .HideCompleted(true)
-                .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
-                .Start(ctx =>
+        var executed = 0;
+        AnsiConsole.Progress()
+            .AutoClear(true)
+            .HideCompleted(true)
+            .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
+            .Start(ctx =>
+            {
+                var task = ctx.AddTask($"Simulating {ticks} ticks", maxValue: ticks);
+                var remaining = ticks;
+                while (remaining > 0)
                 {
-                    var task = ctx.AddTask($"Simulating {ticks} ticks", maxValue: ticks);
-                    for (int i = 0; i < ticks; i++)
-                    {
-                        session.Engine.Step();
-                        task.Increment(1);
-                    }
-                });
-        }
-        else
-        {
-            for (int i = 0; i < ticks; i++)
-                session.Engine.Step();
-        }
+                    var chunk = Math.Min(remaining, ProgressChunkTicks);
+                    var result = grain.StepAsync(chunk).GetAwaiter().GetResult();
+                    executed += result.TicksExecuted;
+                    task.Increment(chunk);
+                    remaining -= chunk;
+
+                    if (result.TicksExecuted == 0)
+                        break; // paused mid-run
+                }
+            });
+        return executed;
     }
 
     private static int ParseTicks(string[] args) =>

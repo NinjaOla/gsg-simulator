@@ -17,9 +17,7 @@
     <Project Path="src/SimEngine.Client/SimEngine.Client.csproj" />
     <Project Path="src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj" />
     <Project Path="src/SimEngine.Contracts/SimEngine.Contracts.csproj" />
-    <Project Path="src/SimEngine.Game/SimEngine.Game.csproj">
-      <Build Solution="Debug|*" Project="false" />
-    </Project>
+    <Project Path="src/SimEngine.Game/SimEngine.Game.csproj" />
     <Project Path="src/SimEngine.Server/SimEngine.Server.csproj" />
     <Project Path="src/SimEngine/SimEngine.csproj" />
   </Folder>
@@ -27,7 +25,12 @@
     <Project Path="tests/SimEngine.Server.Tests/SimEngine.Server.Tests.csproj" />
     <Project Path="tests/SimEngine.Tests/SimEngine.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/SimEngine.MpSpike/SimEngine.MpSpike.csproj" />
+  </Folder>
   <Folder Name="/docs/">
     <File Path="docs/phase-1c-astar-heuristic-spec.md" />
+    <File Path="docs/multiplayer-implementation-plan.md" />
+    <File Path="docs/adr-001-mp-runtime-orleans.md" />
   </Folder>
 </Solution>

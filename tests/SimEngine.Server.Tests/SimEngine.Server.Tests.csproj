@@ -14,4 +14,10 @@
     <ProjectReference Include="..\..\src\SimEngine.Contracts\SimEngine.Contracts.csproj" />
     <ProjectReference Include="..\..\src\SimEngine.Server\SimEngine.Server.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\SimEngine.Tests\TestAssets\grid4.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\grid4.geojson</Link>
+    </Content>
+  </ItemGroup>
 </Project>

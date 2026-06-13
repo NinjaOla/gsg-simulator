@@ -1,5 +1,6 @@
 using SimEngine;
 using SimEngine.Game.Components;
+using SimEngine.Game.Events;
 using SimEngine.State;
 using SimEngine.Systems;
 using SimEngine.Time;
@@ -12,7 +13,11 @@ public sealed class EconomySystem : ISimulationSystem
     public string Key => "game.economy.v1";
     public TickCadence Cadence => TickCadence.Monthly;
     public int Order => 20;
-    public IReadOnlyCollection<StateKey> Reads => [ComponentStateKeys.Of<EconomyComponent>()];
+    public IReadOnlyCollection<StateKey> Reads =>
+    [
+        ComponentStateKeys.Of<EconomyComponent>(),
+        ComponentStateKeys.Of<CountryComponent>(),
+    ];
     public IReadOnlyCollection<StateKey> Writes => [ComponentStateKeys.Of<TreasuryComponent>()];
 
     public void Execute(in SimulationContext ctx)
@@ -30,6 +35,11 @@ public sealed class EconomySystem : ISimulationSystem
 
             ref var treasury = ref ctx.State.Entities.GetRef<TreasuryComponent>(countryId);
             treasury = treasury with { FundsE2 = treasury.FundsE2 + income };
+
+            var tag = ctx.State.Entities.TryGet<CountryComponent>(countryId, out var country)
+                ? country.Tag
+                : countryId.ToString();
+            ctx.Events.Publish(new IncomeCollectedEvent(countryId, tag, income, treasury.FundsE2, ctx.TickEnd));
         }
     }
 }
