@@ -144,6 +144,38 @@ public sealed class GameSessionGrainTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_ReturnsWorldSummaryAndSeededCountry()
+    {
+        var grain = await NewInitializedGrainAsync("snapshot-fresh");
+
+        var snapshot = await grain.GetSnapshotAsync();
+
+        Assert.Equal(4, snapshot.ProvinceCount);
+        Assert.True(snapshot.AdjacencyEdgeCount > 0);
+        Assert.Equal(0, snapshot.TickNumber);
+        Assert.Equal(StartDate, snapshot.CurrentDate);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.WorldName));
+
+        var country = Assert.Single(snapshot.Countries);
+        Assert.Equal("DEU", country.Tag);
+        Assert.Equal(0L, country.FundsE2);
+    }
+
+    [Fact]
+    public async Task GetSnapshotAsync_AfterSteps_ReflectsAdvancedTreasury()
+    {
+        var grain = await NewInitializedGrainAsync("snapshot-stepped");
+
+        // 40 ticks crosses a month boundary, so EconomySystem collects income.
+        await grain.StepAsync(40);
+        var snapshot = await grain.GetSnapshotAsync();
+
+        Assert.Equal(40, snapshot.TickNumber);
+        var country = Assert.Single(snapshot.Countries);
+        Assert.True(country.FundsE2 > 0);
+    }
+
+    [Fact]
     public async Task ShutdownAsync_ReleasesEngine()
     {
         var grain = await NewInitializedGrainAsync("shutdown");

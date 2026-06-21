@@ -35,4 +35,14 @@ public static class GameClient
 
         return client.GetGrain<IGameSessionGrain>(sessionId);
     }
+
+    /// <summary>
+    /// Gets the shared lobby grain used to list and create games.
+    /// </summary>
+    public static ILobbyGrain GetLobby(IClusterClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+
+        return client.GetGrain<ILobbyGrain>(LobbyKeys.Default);
+    }
 }

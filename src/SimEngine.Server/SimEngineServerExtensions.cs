@@ -8,16 +8,34 @@ namespace SimEngine.Server;
 /// </summary>
 public static class SimEngineServerExtensions
 {
+    private const string PubSubStoreName = "PubSubStore";
+
     /// <summary>
-    /// Adds SimEngine server services (local engine provider, etc.) to the host.
+    /// Adds a SimEngine silo to the host. With no options the silo uses Orleans
+    /// localhost clustering on its default ports with the session stream enabled
+    /// — suitable for in-process single-player and for a loopback network host.
+    /// Pass <paramref name="configure"/> to listen on custom ports (network mode).
     /// </summary>
-    public static IHostBuilder UseSimEngineSilo(this IHostBuilder builder)
+    public static IHostBuilder UseSimEngineSilo(
+        this IHostBuilder builder,
+        Action<SimEngineSiloOptions>? configure = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
 
+        var options = new SimEngineSiloOptions();
+        configure?.Invoke(options);
+
         builder.UseOrleans(silo =>
         {
-            silo.UseLocalhostClustering();
+            silo.UseLocalhostClustering(
+                siloPort: options.SiloPort,
+                gatewayPort: options.GatewayPort);
+
+            if (options.EnableStreams)
+            {
+                silo.AddMemoryStreams(Contracts.SessionStreams.ProviderName)
+                    .AddMemoryGrainStorage(PubSubStoreName);
+            }
         });
 
         builder.ConfigureServices(services => services.AddSimEngineServer());

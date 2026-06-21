@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SimEngine.Contracts\SimEngine.Contracts.csproj" />
     <ProjectReference Include="..\..\src\SimEngine.Server\SimEngine.Server.csproj" />
+    <ProjectReference Include="..\..\src\SimEngine.Client\SimEngine.Client.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="..\SimEngine.Tests\TestAssets\grid4.geojson">

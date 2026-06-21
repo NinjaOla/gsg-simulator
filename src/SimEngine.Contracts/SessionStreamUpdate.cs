@@ -17,4 +17,10 @@ public sealed record SessionStreamUpdate
     /// wrapper that collection expressions produce for interface-typed targets.</remarks>
     [Id(1)]
     public string[] Events { get; init; } = [];
+
+    /// <summary>Countries whose treasury changed during the step (absolute balances).</summary>
+    /// <remarks>Only changed countries are included, keeping the message small at
+    /// continent scale. Concrete array for the same Orleans-codec reason as <see cref="Events"/>.</remarks>
+    [Id(2)]
+    public CountryTreasuryDelta[] CountryDeltas { get; init; } = [];
 }

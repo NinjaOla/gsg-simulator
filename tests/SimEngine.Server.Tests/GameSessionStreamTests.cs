@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Orleans.Streams;
 using Orleans.TestingHost;
+using SimEngine.Client;
 using SimEngine.Contracts;
 using Xunit;
 
@@ -94,6 +95,53 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
             Assert.Equal(40, update.Tick.TickNumber);
             Assert.Equal(40, update.Tick.TicksExecuted);
             Assert.Contains(update.Events, e => e.Contains("collected", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await handle.UnsubscribeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task DeltaSync_SnapshotThenStreamUpdates_KeepClientCacheCurrent()
+    {
+        const string sessionId = "delta-session";
+        var grain = _cluster.GrainFactory.GetGrain<IGameSessionGrain>(sessionId);
+        await grain.InitializeAsync(WorldId, StartDate, seed: 42);
+
+        // A client connects: fetch the baseline snapshot, then subscribe for deltas.
+        var snapshot = await grain.GetSnapshotAsync();
+        var cache = new SessionStateCache(snapshot);
+
+        Assert.Equal(0, cache.TickNumber);
+        Assert.True(cache.TryGetCountry("DEU", out var seeded));
+        Assert.Equal(0L, seeded.FundsE2);
+
+        var stream = _cluster.Client
+            .GetStreamProvider(SessionStreams.ProviderName)
+            .GetStream<SessionStreamUpdate>(SessionStreams.For(sessionId));
+
+        var handle = await stream.SubscribeAsync((update, _) =>
+        {
+            cache.Apply(update);
+            return Task.CompletedTask;
+        });
+
+        try
+        {
+            // 40 ticks crosses a month boundary, so EconomySystem changes treasury.
+            await grain.StepAsync(40);
+
+            await WaitUntilAsync(() => cache.TickNumber == 40);
+
+            Assert.True(cache.TryGetCountry("DEU", out var updated));
+            Assert.True(updated.FundsE2 > 0);
+            Assert.Equal("Germany", updated.DisplayName);
+
+            // The cache must match the authoritative engine snapshot.
+            var authoritative = await grain.GetSnapshotAsync();
+            var expected = Assert.Single(authoritative.Countries);
+            Assert.Equal(expected.FundsE2, updated.FundsE2);
         }
         finally
         {

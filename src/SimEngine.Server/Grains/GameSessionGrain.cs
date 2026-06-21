@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Orleans.Streams;
 using SimEngine.Contracts;
 using SimEngine.Game;
+using SimEngine.Game.Components;
 using SimEngine.Game.Events;
 using SimEngine.Game.Seeding;
 using SimEngine.Server.Worlds;
@@ -20,16 +21,17 @@ namespace SimEngine.Server.Grains;
 /// </summary>
 public sealed class GameSessionGrain : Grain, IGameSessionGrain
 {
-    private const string DefaultContentVersion = "dev";
-    private const string DefaultContentHash = "dev";
     private const string WorldNameMetadataKey = "worldName";
 
     private const int MaxEventsPerUpdate = 200;
 
     private readonly ILocalEngineProvider? _engineProvider;
     private readonly ConcurrentQueue<PlayerCommand> _commandQueue = new();
+    private readonly SortedSet<string> _players = new(StringComparer.Ordinal);
     private readonly List<string> _pendingStreamEvents = [];
+    private readonly Dictionary<string, long> _lastPublishedFunds = new(StringComparer.Ordinal);
     private SimulationEngine? _engine;
+    private string? _contentHash;
     private IDisposable? _engineEventSubscription;
     private IAsyncStream<SessionStreamUpdate>? _stream;
     private bool _streamResolved;
@@ -59,10 +61,15 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
         GameWorldSeeder.Seed(state);
         state.Metadata[WorldNameMetadataKey] = asset.DisplayName;
 
+        // Hash the raw world file (plus content version/features) so a joining
+        // client that loaded the same content computes a matching hash. Stored
+        // for the join gate and embedded in save metadata.
+        _contentHash = ContentHasher.ComputeFromFile(worldPath, GameContentDefaults.ContentVersion);
+
         var definition = GameDefinition.CreateDefault(
             scenarioId: worldId,
-            contentVersion: DefaultContentVersion,
-            contentHash: DefaultContentHash);
+            contentVersion: GameContentDefaults.ContentVersion,
+            contentHash: _contentHash);
 
         _engine = new SimulationEngine(
             new SimulationEngineOptions
@@ -94,6 +101,7 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
             definition.ComponentCodecs,
             definition.StateSectionCodecs,
             definition.SaveMetadata);
+        _contentHash = definition.Manifest.ContentHash;
 
         CompleteInitialization(_engine);
 
@@ -106,6 +114,49 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
         ArgumentNullException.ThrowIfNull(command);
         _commandQueue.Enqueue(command);
         return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task EnqueueCommandsAsync(PlayerCommand[] commands)
+    {
+        ArgumentNullException.ThrowIfNull(commands);
+        foreach (var command in commands)
+        {
+            ArgumentNullException.ThrowIfNull(command);
+            _commandQueue.Enqueue(command);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task JoinAsync(string playerId, string contentHash)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(playerId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentHash);
+        ValidateContentCompatibility(contentHash);
+        _players.Add(playerId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task LeaveAsync(string playerId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(playerId);
+        _players.Remove(playerId);
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task<string[]> GetPlayersAsync()
+    {
+        return Task.FromResult(_players.ToArray());
+    }
+
+    /// <inheritdoc />
+    public Task<SessionSnapshot> GetSnapshotAsync()
+    {
+        return Task.FromResult(BuildSnapshot());
     }
 
     /// <inheritdoc />
@@ -207,17 +258,39 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
             "Session has not been initialized. Call InitializeAsync first.");
     }
 
+    /// <summary>
+    /// Rejects a join whose content hash disagrees with this session's loaded
+    /// content. Skipped before initialization: there is no authoritative hash
+    /// yet, and membership is independent of engine init.
+    /// </summary>
+    private void ValidateContentCompatibility(string contentHash)
+    {
+        if (_contentHash is null)
+        {
+            return;
+        }
+
+        if (!string.Equals(_contentHash, contentHash, StringComparison.Ordinal))
+        {
+            throw new ContentMismatchException(_contentHash, contentHash);
+        }
+    }
+
     private void ReleaseEngine()
     {
         _engineEventSubscription?.Dispose();
         _engineEventSubscription = null;
         _pendingStreamEvents.Clear();
+        _lastPublishedFunds.Clear();
+        _players.Clear();
 
         if (_engine is not null)
         {
             _engineProvider?.Unregister(this.GetPrimaryKeyString());
             _engine = null;
         }
+
+        _contentHash = null;
     }
 
     /// <summary>
@@ -251,10 +324,40 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
         {
             Tick = result,
             Events = _pendingStreamEvents.ToArray(),
+            CountryDeltas = CollectTreasuryDeltas(),
         };
         _pendingStreamEvents.Clear();
 
         await stream.OnNextAsync(update);
+    }
+
+    /// <summary>
+    /// Returns the absolute treasury balance for every country whose funds
+    /// changed since the last published update (or snapshot), and updates the
+    /// baseline. Only changed countries are emitted, keeping the per-tick
+    /// message small at continent scale.
+    /// </summary>
+    private CountryTreasuryDelta[] CollectTreasuryDeltas()
+    {
+        var engine = GetEngine();
+        var deltas = new List<CountryTreasuryDelta>();
+
+        foreach (var (countryId, country) in engine.State.Entities.Query<CountryComponent>())
+        {
+            var funds = engine.State.Entities.TryGet<TreasuryComponent>(countryId, out var treasury)
+                ? treasury.FundsE2
+                : 0L;
+
+            if (_lastPublishedFunds.TryGetValue(country.Tag, out var previous) && previous == funds)
+            {
+                continue;
+            }
+
+            _lastPublishedFunds[country.Tag] = funds;
+            deltas.Add(new CountryTreasuryDelta { Tag = country.Tag, FundsE2 = funds });
+        }
+
+        return [.. deltas];
     }
 
     private IAsyncStream<SessionStreamUpdate>? ResolveStream()
@@ -298,6 +401,47 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
             CurrentDate = engine.Time.GetUtcNow(),
             ProvinceCount = engine.State.Entities.CountOf<ProvinceComponent>(),
             AdjacencyEdgeCount = engine.State.Adjacency.EdgeCount,
+        };
+    }
+
+    /// <summary>
+    /// Builds the full baseline read model from current engine state. Read-only:
+    /// the per-tick delta baseline (<see cref="_lastPublishedFunds"/>) tracks what
+    /// has been pushed to the stream, and deltas carry absolute balances, so a
+    /// client that fetches this snapshot and then applies deltas converges
+    /// regardless of when it connected.
+    /// </summary>
+    private SessionSnapshot BuildSnapshot()
+    {
+        var engine = GetEngine();
+        var worldName = engine.State.Metadata.TryGetValue(WorldNameMetadataKey, out var name)
+            && !string.IsNullOrWhiteSpace(name)
+            ? name
+            : "(unknown world)";
+
+        var countries = new List<CountryState>();
+        foreach (var (countryId, country) in engine.State.Entities.Query<CountryComponent>())
+        {
+            var funds = engine.State.Entities.TryGet<TreasuryComponent>(countryId, out var treasury)
+                ? treasury.FundsE2
+                : 0L;
+
+            countries.Add(new CountryState
+            {
+                Tag = country.Tag,
+                DisplayName = country.DisplayName,
+                FundsE2 = funds,
+            });
+        }
+
+        return new SessionSnapshot
+        {
+            WorldName = worldName,
+            TickNumber = engine.TickNumber,
+            CurrentDate = engine.Time.GetUtcNow(),
+            ProvinceCount = engine.State.Entities.CountOf<ProvinceComponent>(),
+            AdjacencyEdgeCount = engine.State.Adjacency.EdgeCount,
+            Countries = [.. countries],
         };
     }
 }

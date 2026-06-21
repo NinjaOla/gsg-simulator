@@ -215,7 +215,9 @@ Single-player                          Multiplayer (host + play)
 Dedicated server: silo-only process, no UI. All players connect remotely.
 ```
 
-**Why:** One code path for SP and MP. The `ConsoleHost` becomes just another client. No separate single-player logic to maintain.
+**Why:** One code path for SP and MP. The `ConsoleHost` becomes just another client — it renders from the synced grain/stream/`SessionStateCache` path, not from a private in-process engine view. No separate single-player logic to maintain.
+
+**Status:** The transport (delta sync, network silo hosting) is in place through step 12. Step 13 removes the last in-process engine backdoor so the host's own client renders like a remote one, adds the content-hash compatibility gate, and wires the SP (host-owned) / MP (detached/shared `--server`) lifecycles. See the implementation plan for the sequenced slices.
 
 ---
 
@@ -250,6 +252,8 @@ SimEngine (engine core, no actor/Orleans dependency)
 | **Tick model** | Lockstep (PDX-style). All player commands for tick N are collected, then `Step()` runs, then results are broadcast. | Preserves deterministic replay. Players at different speeds submit commands at different rates but the simulation processes them in order. |
 | **Command flow** | Player → `PlayerGrain` → `GameSessionGrain` command queue → `DeferredEventBus` → systems consume during `Execute()`. | Reuses existing event bus. Player and AI commands are identical `ISimulationEvent` records. |
 | **State sync** | After each tick (or batch of ticks), the silo pushes a state delta/snapshot to connected player observers via Orleans Streams. | Clients are thin — they render state, they don't simulate. |
+| **Static content** | Static/content data (map/geography, mods) is **not** sent over the wire. Each client loads it locally and exchanges only a content hash (building on `GameManifest` `ContentHash`/`ContentVersion`/`EnabledFeatures`); the server enforces it as a compatibility gate on join and rejects mismatches. | Keeps snapshots tiny at continent scale and protects deterministic lockstep — a client with different content can't desync the sim. |
+| **Server lifecycle** | Single-player uses a host-owned server (co-hosted silo that dies with the client). Multiplayer spawns/attaches a detached/shared `--server` process that survives independently so multiple clients can attach. | One mechanism, two lifetimes: zero-config SP, persistent MP host. |
 | **Persistence** | `GameSessionGrain` calls `SimulationEngine.Save()` to a stream, stored via Orleans grain persistence (e.g., file system, Azure Blob, ADO.NET). | Reuses existing save/load infrastructure. Auto-save every N ticks configurable. |
 | **In-process mode** | For single-player and `ConsoleHost`, the silo is hosted in-process using `UseLocalhostClustering()`. No network serialization overhead. | Zero-config SP experience. Same grain code path. |
 
