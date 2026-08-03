@@ -3,7 +3,7 @@
   "features": [
     {
       "type": "Feature",
-      "properties": { "name": "A", "adm1_code": "A1" },
+      "properties": { "name": "A", "adm1_code": "A1", "province_id": 1, "population": 100000 },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[[0,1],[1,1],[1,2],[0,2],[0,1]]]
@@ -11,7 +11,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "name": "B", "adm1_code": "B1" },
+      "properties": { "name": "B", "adm1_code": "B1", "province_id": 2, "population": 200000 },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[[1,1],[2,1],[2,2],[1,2],[1,1]]]
@@ -19,7 +19,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "name": "C", "adm1_code": "C1" },
+      "properties": { "name": "C", "adm1_code": "C1", "province_id": 3, "population": 300000 },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[[0,0],[1,0],[1,1],[0,1],[0,0]]]
@@ -27,7 +27,7 @@
     },
     {
       "type": "Feature",
-      "properties": { "name": "D", "adm1_code": "D1" },
+      "properties": { "name": "D", "adm1_code": "D1", "province_id": 4, "population": 400000 },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[[1,0],[2,0],[2,1],[1,1],[1,0]]]

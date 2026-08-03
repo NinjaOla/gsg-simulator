@@ -126,4 +126,26 @@ public sealed class ContentHasherTests
         Assert.Throws<ArgumentException>(
             () => ContentHasher.ComputeFromFile("  ", Version));
     }
+
+    [Fact]
+    public void ComputeFromFiles_OrderDoesNotAffectHash()
+    {
+        var path1 = Path.Combine(Path.GetTempPath(), $"simengine-content-a-{Guid.NewGuid():N}.txt");
+        var path2 = Path.Combine(Path.GetTempPath(), $"simengine-content-b-{Guid.NewGuid():N}.txt");
+        try
+        {
+            File.WriteAllText(path1, "A");
+            File.WriteAllText(path2, "B");
+
+            var first = ContentHasher.ComputeFromFiles([path1, path2], Version);
+            var second = ContentHasher.ComputeFromFiles([path2, path1], Version);
+
+            Assert.Equal(first, second);
+        }
+        finally
+        {
+            File.Delete(path1);
+            File.Delete(path2);
+        }
+    }
 }

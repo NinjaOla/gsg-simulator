@@ -12,4 +12,5 @@ public enum RelationshipLabel : int
     Owns = 1,
     Vassal = 2,
     AtWarWith = 3,
+    HasCapital = 4,
 }

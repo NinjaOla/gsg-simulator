@@ -1,8 +1,8 @@
 # Test Assets
 
 GeoJSON files used by the loader test suite. All files are public-domain
-Natural Earth data, trimmed to the property fields the loader actually
-consults so we don't ship unrelated metadata in the repo.
+Natural Earth data (or synthetic test geometry) plus authored game-seeding
+properties used by Phase A country/province data loading.
 
 ## `grid4.geojson`
 
@@ -10,6 +10,10 @@ Handcrafted 2x2 grid of unit squares, four features (`A`, `B`, `C`, `D`).
 Drives most loader unit tests: it has hand-computable centroids, four
 shared edges, and zero corner-only contacts. Edit by hand if you change
 the grid layout.
+
+Each feature also carries:
+- `province_id` (stable authored ProvinceId)
+- `population` (initial province population for game seeding)
 
 ## `germany_admin1.geojson`
 
@@ -19,6 +23,15 @@ in the public-domain Natural Earth v5.x dataset. Used by
 `GeoJsonWorldLoaderIntegrationTests` to exercise the loader on real-world
 polygon data with non-watertight borders, MultiPolygon islands, and the
 typical coordinate density of admin_1 features.
+
+Each feature now includes:
+- `province_id` (stable authored ProvinceId)
+- `population` (initial province population)
+
+## Countries files
+
+`grid4.countries.json` and `germany_admin1.countries.json` define country
+ownership/capital data consumed by `GameWorldSeeder` in Phase A.
 
 ### Reproduction
 
@@ -40,6 +53,12 @@ $out = foreach ($f in $fc.features) {
   [ordered]@{ type='Feature'; properties=$props; geometry=$f.geometry }
 }
 $out = @($out | Sort-Object { $_.properties.adm1_code })
+$i = 1
+foreach ($feature in $out) {
+  $feature.properties.province_id = $i
+  $feature.properties.population = 1000000
+  $i++
+}
 [ordered]@{ type='FeatureCollection'; features=$out } |
   ConvertTo-Json -Depth 100 -Compress |
   Set-Content -LiteralPath germany_admin1.geojson -NoNewline
@@ -51,7 +70,6 @@ Equivalent ogr2ogr command (if GDAL is available):
 ogr2ogr -f GeoJSON germany_admin1.geojson admin1.geojson -where "admin='Germany'"
 ```
 
-The reproduction sorts features by `adm1_code` so the resulting
-`ProvinceId` assignments are stable across upstream releases (they would
-otherwise track Natural Earth's source-file order, which is not a
-documented stability contract).
+The reproduction sorts features by `adm1_code` and then assigns
+`province_id` sequentially so ProvinceIds remain stable across upstream
+releases.

@@ -39,6 +39,7 @@ public static class WorldLoaders
         {
             var seed = result.Provinces[i];
             assignedIds[i] = builder.AddProvince(
+                seed.ProvinceId,
                 seed.Name,
                 seed.Terrain,
                 seed.CentroidLatE6,
@@ -46,13 +47,13 @@ public static class WorldLoaders
         }
 
         // Replay each undirected edge exactly once in canonical order:
-        // walk the assigned ProvinceIds 1..N, ask the loader's adjacency for
+        // walk assigned ProvinceIds ascending, ask the loader's adjacency for
         // each one's neighbors (ascending), and only emit an edge when the
         // neighbor's id is greater than the current id. This sidesteps the
         // documented "FrozenDictionary enumeration order is not guaranteed"
         // caveat on AdjacencyGraph and produces byte-identical builder state
         // across runs.
-        foreach (var id in assignedIds)
+        foreach (var id in assignedIds.OrderBy(static id => id))
         {
             foreach (var neighbor in result.Adjacency.NeighborsOf(id))
             {

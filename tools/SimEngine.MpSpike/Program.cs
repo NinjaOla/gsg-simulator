@@ -211,8 +211,12 @@ SimulationEngine BuildEngine()
     var asset = WorldCatalog.Find(World)
         ?? throw new InvalidOperationException($"Unknown world '{World}'.");
 
-    var state = WorldLoaders.LoadIntoState(new GeoJsonWorldLoader(), WorldCatalog.ResolvePath(asset));
-    GameWorldSeeder.Seed(state);
+    var worldPath = WorldCatalog.ResolvePath(asset);
+    var countriesPath = WorldCatalog.ResolveCountriesPath(asset);
+    using var worldStream = File.OpenRead(worldPath);
+    var worldResult = new GeoJsonWorldLoader().Load(worldStream);
+    var state = WorldLoaders.LoadIntoState(worldResult);
+    GameWorldSeeder.Seed(state, worldResult, countriesPath);
     state.Metadata["worldName"] = asset.DisplayName;
 
     var definition = GameDefinition.CreateDefault(World, "dev", "dev");

@@ -56,10 +56,10 @@ public sealed class WorldLoadersTests
         // pins the canonical edge-replay order in WorldLoaders.
         var seeds = new ProvinceSeed[]
         {
-            new("A", Terrain.Land, 1_500_000, 500_000),
-            new("B", Terrain.Land, 1_500_000, 1_500_000),
-            new("C", Terrain.Land, 500_000, 500_000),
-            new("D", Terrain.Land, 500_000, 1_500_000),
+            new(new ProvinceId(1), "A", Terrain.Land, 1_500_000, 500_000, 100_000),
+            new(new ProvinceId(2), "B", Terrain.Land, 1_500_000, 1_500_000, 100_000),
+            new(new ProvinceId(3), "C", Terrain.Land, 500_000, 500_000, 100_000),
+            new(new ProvinceId(4), "D", Terrain.Land, 500_000, 1_500_000, 100_000),
         };
 
         var graph1 = BuildGrid4Graph(addOrder: new[]
