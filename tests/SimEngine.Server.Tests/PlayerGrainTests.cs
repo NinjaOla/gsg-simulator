@@ -10,8 +10,11 @@ public sealed class PlayerGrainTests : IAsyncLifetime
 {
     private const string WorldId = "grid4";
     private static readonly DateTimeOffset StartDate = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
-    private static readonly string ContentHash = ContentHasher.ComputeFromFile(
-        WorldCatalog.ResolvePath(WorldCatalog.Find(WorldId)!),
+    private static readonly string ContentHash = ContentHasher.ComputeFromFiles(
+        [
+            WorldCatalog.ResolvePath(WorldCatalog.Find(WorldId)!),
+            WorldCatalog.ResolveCountriesPath(WorldCatalog.Find(WorldId)!),
+        ],
         GameContentDefaults.ContentVersion);
 
     private TestCluster _cluster = null!;

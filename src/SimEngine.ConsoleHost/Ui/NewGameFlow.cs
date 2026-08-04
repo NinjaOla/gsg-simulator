@@ -20,9 +20,18 @@ public static class NewGameFlow
                 .AddChoices(WorldCatalog.All));
 
         var worldPath = WorldCatalog.ResolvePath(world);
+        var countriesPath = WorldCatalog.ResolveCountriesPath(world);
         if (!File.Exists(worldPath))
         {
             AnsiConsole.MarkupLine($"[red]World file not found:[/] {worldPath}");
+            AnsiConsole.MarkupLine("[dim]Press any key.[/]");
+            Console.ReadKey(intercept: true);
+            return null;
+        }
+
+        if (!File.Exists(countriesPath))
+        {
+            AnsiConsole.MarkupLine($"[red]Countries file not found:[/] {countriesPath}");
             AnsiConsole.MarkupLine("[dim]Press any key.[/]");
             Console.ReadKey(intercept: true);
             return null;

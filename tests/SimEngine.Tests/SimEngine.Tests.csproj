@@ -26,11 +26,23 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="TestAssets\**\*.*" CopyToOutputDirectory="PreserveNewest" />
-    <!-- WorldCatalog resolves worlds from <output>/Worlds; the console-host
+    <!-- WorldCatalog resolves content from <output>/Worlds; the console-host
          integration tests drive the in-process silo, which loads from there. -->
     <Content Include="TestAssets\grid4.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\grid4.geojson</Link>
+    </Content>
+    <Content Include="TestAssets\germany_admin1.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\germany_admin1.geojson</Link>
+    </Content>
+    <Content Include="TestAssets\grid4.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\grid4.countries.json</Link>
+    </Content>
+    <Content Include="TestAssets\germany_admin1.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\germany_admin1.countries.json</Link>
     </Content>
   </ItemGroup>
 </Project>

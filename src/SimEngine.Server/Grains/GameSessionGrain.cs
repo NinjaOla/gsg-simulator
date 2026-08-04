@@ -52,19 +52,28 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
             ?? throw new ArgumentException($"Unknown world id '{worldId}'.", nameof(worldId));
 
         var worldPath = WorldCatalog.ResolvePath(asset);
+        var countriesPath = WorldCatalog.ResolveCountriesPath(asset);
         if (!File.Exists(worldPath))
         {
             throw new FileNotFoundException($"World file for '{worldId}' not found.", worldPath);
         }
+        if (!File.Exists(countriesPath))
+        {
+            throw new FileNotFoundException($"Countries file for '{worldId}' not found.", countriesPath);
+        }
 
-        var state = WorldLoaders.LoadIntoState(new GeoJsonWorldLoader(), worldPath);
-        GameWorldSeeder.Seed(state);
+        using var worldStream = new FileStream(worldPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var worldResult = new GeoJsonWorldLoader().Load(worldStream);
+        var state = WorldLoaders.LoadIntoState(worldResult);
+        GameWorldSeeder.Seed(state, worldResult, countriesPath);
         state.Metadata[WorldNameMetadataKey] = asset.DisplayName;
 
-        // Hash the raw world file (plus content version/features) so a joining
-        // client that loaded the same content computes a matching hash. Stored
-        // for the join gate and embedded in save metadata.
-        _contentHash = ContentHasher.ComputeFromFile(worldPath, GameContentDefaults.ContentVersion);
+        // Hash world + countries content (plus content version/features) so a
+        // joining client that loaded the same content computes a matching
+        // hash. Stored for the join gate and embedded in save metadata.
+        _contentHash = ContentHasher.ComputeFromFiles(
+            [worldPath, countriesPath],
+            GameContentDefaults.ContentVersion);
 
         var definition = GameDefinition.CreateDefault(
             scenarioId: worldId,

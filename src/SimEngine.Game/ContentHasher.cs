@@ -37,6 +37,48 @@ public static class ContentHasher
     }
 
     /// <summary>
+    /// Computes the content hash from multiple deterministic-content files
+    /// (for example, provinces plus countries) plus content version/features.
+    /// File order does not affect the hash.
+    /// </summary>
+    public static string ComputeFromFiles(
+        IReadOnlyList<string> filePaths,
+        string contentVersion,
+        IReadOnlyList<string>? enabledFeatures = null)
+    {
+        ArgumentNullException.ThrowIfNull(filePaths);
+        if (filePaths.Count == 0)
+        {
+            throw new ArgumentException("At least one file path is required.", nameof(filePaths));
+        }
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendHeader(hash, contentVersion, enabledFeatures);
+
+        var orderedPaths = filePaths
+            .OrderBy(static path => path, StringComparer.Ordinal)
+            .ToArray();
+        AppendInt32(hash, orderedPaths.Length);
+
+        foreach (var filePath in orderedPaths)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+            AppendToken(hash, Path.GetFileName(filePath));
+
+            using var stream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read);
+
+            AppendInt64(hash, stream.Length);
+            AppendStream(hash, stream);
+        }
+
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
+
+    /// <summary>
     /// Computes the content hash from a world content stream plus the content
     /// version and enabled features. Reads <paramref name="worldContent"/> from
     /// its current position to the end. Returns a lowercase hex SHA-256 string.
@@ -50,6 +92,21 @@ public static class ContentHasher
         ArgumentException.ThrowIfNullOrWhiteSpace(contentVersion);
 
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        AppendHeader(hash, contentVersion, enabledFeatures);
+        AppendInt32(hash, 1);
+        AppendToken(hash, "world");
+        AppendInt64(hash, worldContent.CanSeek ? worldContent.Length - worldContent.Position : -1);
+        AppendStream(hash, worldContent);
+
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
+    }
+
+    private static void AppendHeader(
+        IncrementalHash hash,
+        string contentVersion,
+        IReadOnlyList<string>? enabledFeatures)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(contentVersion);
 
         // Header: content version then ordinal-sorted features, each
         // length-prefixed so distinct inputs cannot collide through
@@ -64,13 +121,15 @@ public static class ContentHasher
         {
             AppendToken(hash, feature);
         }
+    }
 
-        // Body: the world bytes, streamed so large worlds stay allocation-light.
+    private static void AppendStream(IncrementalHash hash, Stream content)
+    {
         var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
         try
         {
             int read;
-            while ((read = worldContent.Read(buffer, 0, buffer.Length)) > 0)
+            while ((read = content.Read(buffer, 0, buffer.Length)) > 0)
             {
                 hash.AppendData(buffer.AsSpan(0, read));
             }
@@ -79,8 +138,6 @@ public static class ContentHasher
         {
             ArrayPool<byte>.Shared.Return(buffer);
         }
-
-        return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 
     private static void AppendToken(IncrementalHash hash, string value)
@@ -94,6 +151,13 @@ public static class ContentHasher
     {
         Span<byte> buffer = stackalloc byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(buffer, value);
+        hash.AppendData(buffer);
+    }
+
+    private static void AppendInt64(IncrementalHash hash, long value)
+    {
+        Span<byte> buffer = stackalloc byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64LittleEndian(buffer, value);
         hash.AppendData(buffer);
     }
 }

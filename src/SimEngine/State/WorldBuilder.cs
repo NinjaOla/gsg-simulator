@@ -36,8 +36,39 @@ public sealed class WorldBuilder
         ArgumentNullException.ThrowIfNull(name);
 
         var id = new ProvinceId(_nextProvinceValue++);
+        return AddProvince(id, name, terrain, latE6, lonE6);
+    }
+
+    /// <summary>
+    /// Declares a new province with an explicit <see cref="ProvinceId"/>.
+    /// Useful for data-driven worlds where ids are authored in content.
+    /// </summary>
+    public ProvinceId AddProvince(
+        ProvinceId id,
+        string name,
+        Terrain terrain = Terrain.Land,
+        int latE6 = 0,
+        int lonE6 = 0)
+    {
+        ThrowIfBuilt();
+        ArgumentNullException.ThrowIfNull(name);
+
+        if (id == ProvinceId.None)
+        {
+            throw new ArgumentException("ProvinceId.None is not a valid province id.", nameof(id));
+        }
+
+        if (!_declaredProvinces.Add(id))
+        {
+            throw new InvalidOperationException($"Province {id} already declared.");
+        }
+
+        if (id.Value >= _nextProvinceValue)
+        {
+            _nextProvinceValue = checked(id.Value + 1);
+        }
+
         _pendingProvinces.Add((id, new ProvinceComponent(name, terrain, latE6, lonE6)));
-        _declaredProvinces.Add(id);
         _adjacencyBuilder.AddProvince(id);
         return id;
     }
@@ -82,13 +113,7 @@ public sealed class WorldBuilder
         _pendingProvinces.Sort(static (x, y) => x.Id.CompareTo(y.Id));
         foreach (var (provinceId, component) in _pendingProvinces)
         {
-            var entityId = state.Entities.Create();
-            if (entityId.Value != provinceId.Value)
-            {
-                throw new InvalidOperationException(
-                    $"EntityId allocation drifted from ProvinceId: expected {provinceId.Value}, got {entityId.Value}.");
-            }
-
+            var entityId = state.Entities.Create(provinceId.AsEntity());
             state.Entities.Attach(entityId, component);
         }
 

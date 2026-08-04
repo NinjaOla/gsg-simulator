@@ -23,6 +23,23 @@ public sealed class GeoJsonWorldLoaderTests
         Assert.Equal("B", result.Provinces[1].Name);
         Assert.Equal("C", result.Provinces[2].Name);
         Assert.Equal("D", result.Provinces[3].Name);
+        Assert.Equal(new ProvinceId(1), result.Provinces[0].ProvinceId);
+        Assert.Equal(new ProvinceId(2), result.Provinces[1].ProvinceId);
+        Assert.Equal(new ProvinceId(3), result.Provinces[2].ProvinceId);
+        Assert.Equal(new ProvinceId(4), result.Provinces[3].ProvinceId);
+    }
+
+    [Fact]
+    public void Load_Grid4_ReadsInitialPopulationFromGeoJsonProperties()
+    {
+        var loader = new GeoJsonWorldLoader();
+        using var stream = File.OpenRead(Grid4Path);
+        var result = loader.Load(stream);
+
+        Assert.Equal(100_000, result.Provinces[0].InitialPopulation);
+        Assert.Equal(200_000, result.Provinces[1].InitialPopulation);
+        Assert.Equal(300_000, result.Provinces[2].InitialPopulation);
+        Assert.Equal(400_000, result.Provinces[3].InitialPopulation);
     }
 
     [Fact]
@@ -103,6 +120,36 @@ public sealed class GeoJsonWorldLoaderTests
             "{\"type\":\"Feature\",\"properties\":{\"name\":\"X\"},\"geometry\":null}]}";
         var loader = new GeoJsonWorldLoader();
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(Json));
+        Assert.Throws<InvalidDataException>(() => loader.Load(stream));
+    }
+
+    [Fact]
+    public void Load_MissingProvinceId_Throws()
+    {
+        const string Json =
+            "{\"type\":\"FeatureCollection\",\"features\":[" +
+            "{\"type\":\"Feature\",\"properties\":{\"name\":\"X\",\"population\":1000}," +
+            "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}]}";
+
+        var loader = new GeoJsonWorldLoader();
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(Json));
+
+        Assert.Throws<InvalidDataException>(() => loader.Load(stream));
+    }
+
+    [Fact]
+    public void Load_DuplicateProvinceId_Throws()
+    {
+        const string Json =
+            "{\"type\":\"FeatureCollection\",\"features\":[" +
+            "{\"type\":\"Feature\",\"properties\":{\"name\":\"A\",\"province_id\":1,\"population\":1000}," +
+            "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[0,0],[1,0],[1,1],[0,1],[0,0]]]}}," +
+            "{\"type\":\"Feature\",\"properties\":{\"name\":\"B\",\"province_id\":1,\"population\":1000}," +
+            "\"geometry\":{\"type\":\"Polygon\",\"coordinates\":[[[1,0],[2,0],[2,1],[1,1],[1,0]]]}}]}";
+
+        var loader = new GeoJsonWorldLoader();
+        using var stream = new MemoryStream(Encoding.UTF8.GetBytes(Json));
+
         Assert.Throws<InvalidDataException>(() => loader.Load(stream));
     }
 

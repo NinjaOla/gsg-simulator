@@ -1,3 +1,4 @@
+using SimEngine.Ids;
 using SimEngine.State.Components;
 
 namespace SimEngine.State.Loading;
@@ -18,16 +19,18 @@ public interface IWorldLoader
 /// records, and <see cref="WorldBuilder"/> turns them into state.
 /// </summary>
 public readonly record struct ProvinceSeed(
+    ProvinceId ProvinceId,
     string Name,
     Terrain Terrain,
     int CentroidLatE6,
-    int CentroidLonE6);
+    int CentroidLonE6,
+    long InitialPopulation);
 
 /// <summary>
-/// Output of an <see cref="IWorldLoader"/>. The list index corresponds to
-/// the order in which provinces should be added to the world; downstream
-/// consumers are expected to feed the seeds into a <see cref="WorldBuilder"/>
-/// in this order and then replay the adjacency edges.
+/// Output of an <see cref="IWorldLoader"/>. Provinces carry explicit
+/// <see cref="ProvinceId"/> values supplied by content, and consumers should
+/// feed the seeds into a <see cref="WorldBuilder"/> before replaying the
+/// adjacency edges.
 /// </summary>
 public sealed record WorldLoadResult(
     IReadOnlyList<ProvinceSeed> Provinces,

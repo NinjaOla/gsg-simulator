@@ -69,14 +69,18 @@ public sealed class GrainEngineParityTests : IAsyncLifetime
         Assert.NotNull(asset);
 
         var worldPath = WorldCatalog.ResolvePath(asset);
-        var state = WorldLoaders.LoadIntoState(new GeoJsonWorldLoader(), worldPath);
-        GameWorldSeeder.Seed(state);
+        var countriesPath = WorldCatalog.ResolveCountriesPath(asset);
+
+        using var worldStream = File.OpenRead(worldPath);
+        var worldResult = new GeoJsonWorldLoader().Load(worldStream);
+        var state = WorldLoaders.LoadIntoState(worldResult);
+        GameWorldSeeder.Seed(state, worldResult, countriesPath);
         state.Metadata["worldName"] = asset.DisplayName;
 
         var definition = GameDefinition.CreateDefault(
             scenarioId: WorldId,
             contentVersion: GameContentDefaults.ContentVersion,
-            contentHash: ContentHasher.ComputeFromFile(worldPath, GameContentDefaults.ContentVersion));
+            contentHash: ContentHasher.ComputeFromFiles([worldPath, countriesPath], GameContentDefaults.ContentVersion));
 
         return new SimulationEngine(
             new SimulationEngineOptions

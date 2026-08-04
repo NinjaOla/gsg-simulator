@@ -114,8 +114,10 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
         var cache = new SessionStateCache(snapshot);
 
         Assert.Equal(0, cache.TickNumber);
-        Assert.True(cache.TryGetCountry("DEU", out var seeded));
-        Assert.Equal(0L, seeded.FundsE2);
+        Assert.True(cache.TryGetCountry("ALP", out var alphaSeeded));
+        Assert.True(cache.TryGetCountry("BET", out var betaSeeded));
+        Assert.Equal(0L, alphaSeeded.FundsE2);
+        Assert.Equal(0L, betaSeeded.FundsE2);
 
         var stream = _cluster.Client
             .GetStreamProvider(SessionStreams.ProviderName)
@@ -134,14 +136,15 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
 
             await WaitUntilAsync(() => cache.TickNumber == 40);
 
-            Assert.True(cache.TryGetCountry("DEU", out var updated));
-            Assert.True(updated.FundsE2 > 0);
-            Assert.Equal("Germany", updated.DisplayName);
+            Assert.True(cache.TryGetCountry("ALP", out var alphaUpdated));
+            Assert.True(cache.TryGetCountry("BET", out var betaUpdated));
+            Assert.True(alphaUpdated.FundsE2 > 0);
+            Assert.True(betaUpdated.FundsE2 > 0);
 
             // The cache must match the authoritative engine snapshot.
             var authoritative = await grain.GetSnapshotAsync();
-            var expected = Assert.Single(authoritative.Countries);
-            Assert.Equal(expected.FundsE2, updated.FundsE2);
+            Assert.Equal(authoritative.Countries.Single(c => c.Tag == "ALP").FundsE2, alphaUpdated.FundsE2);
+            Assert.Equal(authoritative.Countries.Single(c => c.Tag == "BET").FundsE2, betaUpdated.FundsE2);
         }
         finally
         {

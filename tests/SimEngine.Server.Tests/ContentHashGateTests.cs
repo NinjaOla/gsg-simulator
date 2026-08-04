@@ -18,8 +18,11 @@ public sealed class ContentHashGateTests : IAsyncLifetime
     private static readonly DateTimeOffset StartDate = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
     // The hash a compatible client computes locally from the same world content.
-    private static readonly string MatchingHash = ContentHasher.ComputeFromFile(
-        WorldCatalog.ResolvePath(WorldCatalog.Find(WorldId)!),
+    private static readonly string MatchingHash = ContentHasher.ComputeFromFiles(
+        [
+            WorldCatalog.ResolvePath(WorldCatalog.Find(WorldId)!),
+            WorldCatalog.ResolveCountriesPath(WorldCatalog.Find(WorldId)!),
+        ],
         GameContentDefaults.ContentVersion);
 
     private TestCluster _cluster = null!;

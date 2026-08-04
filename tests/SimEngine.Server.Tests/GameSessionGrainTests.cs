@@ -156,9 +156,9 @@ public sealed class GameSessionGrainTests : IAsyncLifetime
         Assert.Equal(StartDate, snapshot.CurrentDate);
         Assert.False(string.IsNullOrWhiteSpace(snapshot.WorldName));
 
-        var country = Assert.Single(snapshot.Countries);
-        Assert.Equal("DEU", country.Tag);
-        Assert.Equal(0L, country.FundsE2);
+        Assert.Equal(2, snapshot.Countries.Length);
+        Assert.Contains(snapshot.Countries, c => c.Tag == "ALP" && c.FundsE2 == 0L);
+        Assert.Contains(snapshot.Countries, c => c.Tag == "BET" && c.FundsE2 == 0L);
     }
 
     [Fact]
@@ -171,8 +171,8 @@ public sealed class GameSessionGrainTests : IAsyncLifetime
         var snapshot = await grain.GetSnapshotAsync();
 
         Assert.Equal(40, snapshot.TickNumber);
-        var country = Assert.Single(snapshot.Countries);
-        Assert.True(country.FundsE2 > 0);
+        Assert.Equal(2, snapshot.Countries.Length);
+        Assert.All(snapshot.Countries, country => Assert.True(country.FundsE2 > 0));
     }
 
     [Fact]
