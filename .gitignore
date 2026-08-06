@@ -416,3 +416,8 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Six Labors (ImageSharp) license key - must never be committed
+sixlabors.lic
+sixlabors.license.key
+*.license.key

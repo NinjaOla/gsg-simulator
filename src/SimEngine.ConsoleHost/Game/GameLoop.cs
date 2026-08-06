@@ -62,6 +62,7 @@ public static class GameLoop
             new PathCommand(),
             new AdjacencyCommand(),
             new EventsCommand(),
+            new MapCommand(),
             new SaveCommand(),
             new LoadCommand(),
             new QuitCommand(),

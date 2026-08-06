@@ -17,6 +17,7 @@ public static class WorldCatalog
     [
         new("grid4", "Grid 4  (2x2 synthetic)", "grid4.geojson", "grid4.countries.json"),
         new("germany_admin1", "Germany  (16 Bundeslander)", "germany_admin1.geojson", "germany_admin1.countries.json"),
+        new("europe_west_admin1", "Western Europe  (Germany + neighbors)", "europe_west_admin1.geojson", "europe_west_admin1.countries.json"),
     ];
 
     /// <summary>Finds a world by its stable id, or null if unknown.</summary>

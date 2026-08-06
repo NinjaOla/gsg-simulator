@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>SimEngine.Rendering</RootNamespace>
+    <AssemblyName>SimEngine.Rendering</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    ImageSharp v3+ uses the Six Labors Split License and enforces a license key
+    at build time. The key must NOT be committed to source control.
+
+    Provide the key in one of these ways (highest precedence first):
+      1. SixLaborsLicenseKey        - MSBuild property or environment variable
+                                       holding the key directly.
+      2. SixLaborsLicenseKeyPath    - MSBuild property or environment variable
+                                       pointing at a file that contains the key.
+      3. A file named 'sixlabors.lic' next to this project (gitignored).
+
+    Example (PowerShell):
+      $env:SixLaborsLicenseKeyPath = 'C:\secrets\sixlabors.lic'
+  -->
+  <PropertyGroup>
+    <SixLaborsLicenseKeyPath Condition="'$(SixLaborsLicenseKeyPath)' == ''">$(MSBuildProjectDirectory)\sixlabors.lic</SixLaborsLicenseKeyPath>
+  </PropertyGroup>
+
+  <Target Name="ReadSixLaborsLicenseKey"
+          BeforeTargets="CoreCompile"
+          Condition="'$(SixLaborsLicenseKey)' == '' and Exists('$(SixLaborsLicenseKeyPath)')">
+    <ReadLinesFromFile File="$(SixLaborsLicenseKeyPath)">
+      <Output TaskParameter="Lines" PropertyName="SixLaborsLicenseKey" />
+    </ReadLinesFromFile>
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp.Drawing" />
+  </ItemGroup>
+
+</Project>

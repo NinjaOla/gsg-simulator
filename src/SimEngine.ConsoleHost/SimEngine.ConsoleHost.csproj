@@ -11,6 +11,7 @@
     <ProjectReference Include="..\SimEngine.Game\SimEngine.Game.csproj" />
     <ProjectReference Include="..\SimEngine.Contracts\SimEngine.Contracts.csproj" />
     <ProjectReference Include="..\SimEngine.Server\SimEngine.Server.csproj" />
+    <ProjectReference Include="..\SimEngine.Rendering\SimEngine.Rendering.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -31,6 +32,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\germany_admin1.geojson</Link>
     </Content>
+    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\europe_west_admin1.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\europe_west_admin1.geojson</Link>
+    </Content>
     <Content Include="..\..\tests\SimEngine.Tests\TestAssets\grid4.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\grid4.countries.json</Link>
@@ -38,6 +43,10 @@
     <Content Include="..\..\tests\SimEngine.Tests\TestAssets\germany_admin1.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\germany_admin1.countries.json</Link>
+    </Content>
+    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\europe_west_admin1.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\europe_west_admin1.countries.json</Link>
     </Content>
   </ItemGroup>
 

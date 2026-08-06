@@ -67,6 +67,7 @@ public sealed class GameSessionGrain : Grain, IGameSessionGrain
         var state = WorldLoaders.LoadIntoState(worldResult);
         GameWorldSeeder.Seed(state, worldResult, countriesPath);
         state.Metadata[WorldNameMetadataKey] = asset.DisplayName;
+        state.Metadata[GameManifestMetadata.ScenarioIdKey] = worldId;
 
         // Hash world + countries content (plus content version/features) so a
         // joining client that loaded the same content computes a matching

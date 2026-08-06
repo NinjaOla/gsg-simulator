@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>SimEngine.WorldGen</RootNamespace>
+    <AssemblyName>SimEngine.WorldGen</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <!-- Offline content-pipeline tool: console output is the whole point. -->
+    <NoWarn>$(NoWarn);CA1303</NoWarn>
+  </PropertyGroup>
+
+</Project>

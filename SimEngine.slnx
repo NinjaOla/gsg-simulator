@@ -18,6 +18,7 @@
     <Project Path="src/SimEngine.ConsoleHost/SimEngine.ConsoleHost.csproj" />
     <Project Path="src/SimEngine.Contracts/SimEngine.Contracts.csproj" />
     <Project Path="src/SimEngine.Game/SimEngine.Game.csproj" />
+    <Project Path="src/SimEngine.Rendering/SimEngine.Rendering.csproj" />
     <Project Path="src/SimEngine.Server/SimEngine.Server.csproj" />
     <Project Path="src/SimEngine/SimEngine.csproj" />
   </Folder>
