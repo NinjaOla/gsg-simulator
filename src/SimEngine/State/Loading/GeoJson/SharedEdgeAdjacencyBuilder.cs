@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Threading.Tasks;
 using NetTopologySuite.Geometries;
 using SimEngine.Ids;
 
@@ -33,30 +34,58 @@ internal static class SharedEdgeAdjacencyBuilder
         }
 
         // Step 1: extract every ring of every polygon as a list of snapped
-        // coordinate pairs, partitioned by feature index.
-        var ringsByFeature = new List<List<long[]>>(features.Count);
-        foreach (var (id, geometry) in features)
+        // coordinate pairs, partitioned by feature index. Ring extraction is
+        // read-only per feature, so we do it in parallel into a pre-sized
+        // array (each slot written by exactly one task -> no synchronization).
+        var ringsByFeature = new List<long[]>[features.Count];
+        Parallel.For(0, features.Count, featureIndex =>
         {
-            builder.AddProvince(id);
-            ringsByFeature.Add(ExtractSnappedRings(geometry));
+            ringsByFeature[featureIndex] = ExtractSnappedRings(features[featureIndex].Geometry);
+        });
+
+        for (var featureIndex = 0; featureIndex < features.Count; featureIndex++)
+        {
+            builder.AddProvince(features[featureIndex].Id);
         }
 
-        // Step 2: collect every distinct snapped vertex per ring so we can
-        // split T-junctions in step 3.
-        var allVertices = CollectVertexSet(ringsByFeature);
+        // Step 2: collect every distinct snapped vertex and index it spatially
+        // so T-junction splitting (step 3) can query only the vertices near a
+        // segment instead of scanning the entire global vertex set.
+        var vertexIndex = VertexSpatialIndex.Build(ringsByFeature);
 
         // Step 3: walk every ring's segments, splitting any segment that has
         // an interior vertex on it (T-junction handling), and bucket edges by
-        // their canonical key.
-        var edgeOwners = new Dictionary<EdgeKey, EdgeOwners>(capacity: features.Count * 8);
-        for (var featureIndex = 0; featureIndex < features.Count; featureIndex++)
+        // their canonical key. Each feature emits into its own edge map (no
+        // shared mutable state), then we merge the per-feature maps back in
+        // ascending feature-index order so the result is identical to the
+        // sequential build regardless of thread scheduling.
+        var edgeOwnersByFeature = new Dictionary<EdgeKey, EdgeOwners>[features.Count];
+        Parallel.For(0, features.Count, featureIndex =>
         {
             var provinceId = features[featureIndex].Id;
             var rings = ringsByFeature[featureIndex];
-
+            var local = new Dictionary<EdgeKey, EdgeOwners>();
             foreach (var ring in rings)
             {
-                EmitRingSegments(ring, allVertices, provinceId, edgeOwners);
+                EmitRingSegments(ring, vertexIndex, provinceId, local);
+            }
+
+            edgeOwnersByFeature[featureIndex] = local;
+        });
+
+        var edgeOwners = new Dictionary<EdgeKey, EdgeOwners>(capacity: features.Count * 8);
+        for (var featureIndex = 0; featureIndex < features.Count; featureIndex++)
+        {
+            foreach (var (key, local) in edgeOwnersByFeature[featureIndex])
+            {
+                if (edgeOwners.TryGetValue(key, out var owners))
+                {
+                    edgeOwners[key] = owners.Merge(local);
+                }
+                else
+                {
+                    edgeOwners[key] = local;
+                }
             }
         }
 
@@ -142,26 +171,99 @@ internal static class SharedEdgeAdjacencyBuilder
         return snapped;
     }
 
-    private static HashSet<(long Lon, long Lat)> CollectVertexSet(List<List<long[]>> ringsByFeature)
+    /// <summary>
+    /// Uniform-grid spatial index over the global snapped vertex set. Built
+    /// once, then queried read-only (thread-safe) from many segment emitters.
+    /// A segment's colinear-vertex search only needs to inspect vertices whose
+    /// grid cells overlap the segment's bounding box, turning the former
+    /// O(segments * allVertices) scan into roughly O(segments * localVertices).
+    /// </summary>
+    private sealed class VertexSpatialIndex
     {
-        var set = new HashSet<(long, long)>();
-        foreach (var rings in ringsByFeature)
+        // 1 grid cell = 1 degree (SnapScale units). Snapped coords are in
+        // 1e-7-degree units, so this keeps per-cell vertex counts small while
+        // bounding the number of cells a single (short) border segment spans.
+        private const long CellSize = (long)SnapScale;
+
+        private readonly Dictionary<(long CellX, long CellY), List<(long Lon, long Lat)>> _cells;
+
+        private VertexSpatialIndex(Dictionary<(long, long), List<(long Lon, long Lat)>> cells)
         {
-            foreach (var ring in rings)
+            _cells = cells;
+        }
+
+        public static VertexSpatialIndex Build(IReadOnlyList<List<long[]>> ringsByFeature)
+        {
+            // De-duplicate vertices first (a shared border vertex appears in
+            // many rings) so each distinct vertex is bucketed exactly once.
+            var vertices = new HashSet<(long Lon, long Lat)>();
+            foreach (var rings in ringsByFeature)
             {
-                for (var i = 0; i < ring.Length; i += 2)
+                foreach (var ring in rings)
                 {
-                    set.Add((ring[i], ring[i + 1]));
+                    for (var i = 0; i < ring.Length; i += 2)
+                    {
+                        vertices.Add((ring[i], ring[i + 1]));
+                    }
+                }
+            }
+
+            var cells = new Dictionary<(long, long), List<(long Lon, long Lat)>>();
+            foreach (var v in vertices)
+            {
+                var key = (CellOf(v.Lon), CellOf(v.Lat));
+                if (!cells.TryGetValue(key, out var bucket))
+                {
+                    bucket = [];
+                    cells[key] = bucket;
+                }
+
+                bucket.Add(v);
+            }
+
+            return new VertexSpatialIndex(cells);
+        }
+
+        /// <summary>
+        /// Invokes <paramref name="onVertex"/> for every indexed vertex whose
+        /// grid cell overlaps the bounding box of segment (a, b). May yield
+        /// vertices outside the exact box; callers still apply the precise
+        /// bbox and colinearity tests.
+        /// </summary>
+        public void ForEachInBounds(
+            long aLon, long aLat, long bLon, long bLat,
+            Action<(long Lon, long Lat)> onVertex)
+        {
+            var minCellX = CellOf(Math.Min(aLon, bLon));
+            var maxCellX = CellOf(Math.Max(aLon, bLon));
+            var minCellY = CellOf(Math.Min(aLat, bLat));
+            var maxCellY = CellOf(Math.Max(aLat, bLat));
+
+            for (var cx = minCellX; cx <= maxCellX; cx++)
+            {
+                for (var cy = minCellY; cy <= maxCellY; cy++)
+                {
+                    if (_cells.TryGetValue((cx, cy), out var bucket))
+                    {
+                        foreach (var v in bucket)
+                        {
+                            onVertex(v);
+                        }
+                    }
                 }
             }
         }
 
-        return set;
+        private static long CellOf(long coord)
+        {
+            // Floor division so negative coordinates bucket consistently.
+            return coord >= 0 ? coord / CellSize : (coord - CellSize + 1) / CellSize;
+        }
     }
 
     private static void EmitRingSegments(
         long[] ring,
-        HashSet<(long Lon, long Lat)> allVertices,
+        VertexSpatialIndex vertexIndex,
         ProvinceId provinceId,
         Dictionary<EdgeKey, EdgeOwners> edgeOwners)
     {
@@ -182,7 +284,7 @@ internal static class SharedEdgeAdjacencyBuilder
                 continue;
             }
 
-            EmitSegmentWithSplits(aLon, aLat, bLon, bLat, allVertices, provinceId, edgeOwners);
+            EmitSegmentWithSplits(aLon, aLat, bLon, bLat, vertexIndex, provinceId, edgeOwners);
         }
     }
 
@@ -191,7 +293,7 @@ internal static class SharedEdgeAdjacencyBuilder
         long aLat,
         long bLon,
         long bLat,
-        HashSet<(long Lon, long Lat)> allVertices,
+        VertexSpatialIndex vertexIndex,
         ProvinceId provinceId,
         Dictionary<EdgeKey, EdgeOwners> edgeOwners)
     {
@@ -213,22 +315,22 @@ internal static class SharedEdgeAdjacencyBuilder
         Int128 dy = dyLong;
 
         var splitters = new List<(long Lon, long Lat)>();
-        foreach (var v in allVertices)
+        vertexIndex.ForEachInBounds(aLon, aLat, bLon, bLat, v =>
         {
             if ((v.Lon == aLon && v.Lat == aLat) || (v.Lon == bLon && v.Lat == bLat))
             {
-                continue;
+                return;
             }
 
             // Bounding-box reject first — fast and avoids wide multiplies.
             if (v.Lon < Math.Min(aLon, bLon) || v.Lon > Math.Max(aLon, bLon))
             {
-                continue;
+                return;
             }
 
             if (v.Lat < Math.Min(aLat, bLat) || v.Lat > Math.Max(aLat, bLat))
             {
-                continue;
+                return;
             }
 
             Int128 lhs = dx * (v.Lat - aLat);
@@ -237,7 +339,7 @@ internal static class SharedEdgeAdjacencyBuilder
             {
                 splitters.Add(v);
             }
-        }
+        });
 
         if (splitters.Count == 0)
         {
@@ -299,6 +401,14 @@ internal static class SharedEdgeAdjacencyBuilder
         int OwnerCount)
     {
         public static EdgeOwners Initial(ProvinceId id) => new(id, ProvinceId.None, 1);
+
+        /// <summary>
+        /// Folds another bucket into this one. Per-feature local maps are built
+        /// for a single province, so <paramref name="other"/> always carries
+        /// exactly one owner; merging in ascending feature-index order yields
+        /// the same First/Second/OwnerCount as the sequential build.
+        /// </summary>
+        public EdgeOwners Merge(EdgeOwners other) => With(other.First);
 
         public EdgeOwners With(ProvinceId id)
         {

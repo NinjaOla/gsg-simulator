@@ -7,17 +7,38 @@ using System.Text.Json;
 //
 // Usage (from repo root):
 //   dotnet run --project tools/SimEngine.WorldGen -- <outputDir> [sourceFile]
+//   dotnet run --project tools/SimEngine.WorldGen -- --all <outputDir> [sourceFile]
+//
+// Without --all it emits the curated "europe_west_admin1" subset. With --all it
+// emits "world_admin1" containing every country present in the source, deriving
+// each country's display name from the Natural Earth `admin` property.
 //
 // If <sourceFile> is omitted it defaults to ne_10m_admin_1_states_provinces.geojson
 // in <outputDir>, downloading it from the Natural Earth mirror when absent.
 
 const string UpstreamUrl =
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_1_states_provinces.geojson";
-const string WorldId = "europe_west_admin1";
 const long SeedPopulation = 1_000_000;
 
+var positional = new List<string>();
+var allCountries = false;
+foreach (var arg in args)
+{
+    if (string.Equals(arg, "--all", StringComparison.OrdinalIgnoreCase))
+    {
+        allCountries = true;
+    }
+    else
+    {
+        positional.Add(arg);
+    }
+}
+
+var worldId = allCountries ? "world_admin1" : "europe_west_admin1";
+
 // Germany + immediate neighbors, keyed by Natural Earth adm0_a3, insertion-ordered.
-var countryNames = new (string Code, string Name)[]
+// Used only for the curated (non --all) subset.
+var curatedCountryNames = new (string Code, string Name)[]
 {
     ("DEU", "Germany"),
     ("FRA", "France"),
@@ -30,16 +51,16 @@ var countryNames = new (string Code, string Name)[]
     ("DNK", "Denmark"),
     ("LUX", "Luxembourg"),
 };
-var wanted = countryNames.Select(c => c.Code).ToHashSet(StringComparer.Ordinal);
+var wanted = curatedCountryNames.Select(c => c.Code).ToHashSet(StringComparer.Ordinal);
 
 // Province properties preserved on each feature (superset of the loader's needs:
 // name -> name_en -> name_alt -> adm1_code fallback chain, plus province_id/population).
 string[] keep = ["name", "name_en", "name_alt", "adm1_code", "admin", "adm0_a3", "iso_3166_2"];
 
-var outputDir = args.Length > 0 ? args[0] : Directory.GetCurrentDirectory();
+var outputDir = positional.Count > 0 ? positional[0] : Directory.GetCurrentDirectory();
 Directory.CreateDirectory(outputDir);
-var sourceFile = args.Length > 1
-    ? args[1]
+var sourceFile = positional.Count > 1
+    ? positional[1]
     : Path.Combine(outputDir, "ne_10m_admin_1_states_provinces.geojson");
 
 if (!File.Exists(sourceFile))
@@ -55,6 +76,19 @@ Console.WriteLine($"Reading {sourceFile} ...");
 var bytes = await File.ReadAllBytesAsync(sourceFile).ConfigureAwait(false);
 using var doc = JsonDocument.Parse(bytes);
 
+// Country display names, insertion-ordered. For the curated subset this is the
+// hand-authored list; for --all it is discovered from the data (adm0_a3 -> admin).
+var countryOrder = new List<string>();
+var countryDisplayNames = new Dictionary<string, string>(StringComparer.Ordinal);
+if (!allCountries)
+{
+    foreach (var (code, name) in curatedCountryNames)
+    {
+        countryOrder.Add(code);
+        countryDisplayNames[code] = name;
+    }
+}
+
 // Materialize matching features (cloned so we can dispose the source document).
 var selected = new List<SelectedFeature>();
 foreach (var feature in doc.RootElement.GetProperty("features").EnumerateArray())
@@ -66,9 +100,18 @@ foreach (var feature in doc.RootElement.GetProperty("features").EnumerateArray()
     }
 
     var code = codeEl.GetString()!;
-    if (!wanted.Contains(code))
+    if (!allCountries && !wanted.Contains(code))
     {
         continue;
+    }
+
+    if (allCountries && !countryDisplayNames.ContainsKey(code))
+    {
+        var displayName = props.TryGetProperty("admin", out var adminEl) && adminEl.ValueKind == JsonValueKind.String
+            ? adminEl.GetString()!
+            : code;
+        countryOrder.Add(code);
+        countryDisplayNames[code] = displayName;
     }
 
     var kept = new List<KeyValuePair<string, JsonElement>>();
@@ -95,14 +138,14 @@ for (var i = 0; i < selected.Count; i++)
     selected[i].ProvinceId = i + 1;
 }
 
-Console.WriteLine($"Selected {selected.Count} provinces across {countryNames.Length} countries.");
+Console.WriteLine($"Selected {selected.Count} provinces across {countryOrder.Count} countries.");
 if (selected.Count == 0)
 {
     Console.Error.WriteLine("No provinces matched; aborting without writing.");
     return 1;
 }
 
-var geoJsonPath = Path.Combine(outputDir, $"{WorldId}.geojson");
+var geoJsonPath = Path.Combine(outputDir, $"{worldId}.geojson");
 await using (var geoStream = File.Create(geoJsonPath))
 await using (var writer = new Utf8JsonWriter(geoStream))
 {
@@ -132,14 +175,15 @@ await using (var writer = new Utf8JsonWriter(geoStream))
     writer.WriteEndObject();
 }
 
-var countriesPath = Path.Combine(outputDir, $"{WorldId}.countries.json");
+var countriesPath = Path.Combine(outputDir, $"{worldId}.countries.json");
 await using (var countryStream = File.Create(countriesPath))
 await using (var writer = new Utf8JsonWriter(countryStream, new JsonWriterOptions { Indented = true }))
 {
     writer.WriteStartObject();
     writer.WriteStartArray("countries");
-    foreach (var (code, name) in countryNames)
+    foreach (var code in countryOrder)
     {
+        var name = countryDisplayNames[code];
         var owns = selected
             .Where(f => string.Equals(f.Adm0A3, code, StringComparison.Ordinal))
             .Select(f => f.ProvinceId)
