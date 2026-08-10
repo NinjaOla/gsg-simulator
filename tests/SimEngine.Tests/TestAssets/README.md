@@ -33,6 +33,15 @@ Each feature now includes:
 `grid4.countries.json` and `germany_admin1.countries.json` define country
 ownership/capital data consumed by `GameWorldSeeder` in Phase A.
 
+## Feature `terrain` property (planned)
+
+An optional `terrain` property (`"land"` / `"sea"`) is being introduced to mark
+sea provinces for ocean-geometry support. When absent, features default to
+`Terrain.Land`, so all existing assets remain all-land without edits. Sea
+provinces are unowned (not referenced by any `*.countries.json`). See
+[`docs/ocean-geometry-plan.md`](../../../docs/ocean-geometry-plan.md).
+
+
 ## `europe_west_admin1.geojson`
 
 Germany plus its immediate neighbors (DEU, FRA, POL, CZE, AUT, CHE, NLD,

@@ -196,6 +196,17 @@ Most likely pure C# for everything as that is what I enjoy.
 
 ---
 
+## Content Roadmap
+
+Planned world-data features and their sequenced implementation slices:
+
+> **Ocean geometry:** See [`docs/ocean-geometry-plan.md`](docs/ocean-geometry-plan.md)
+> for adding first-class sea provinces (real ocean polygons, land↔sea adjacency,
+> water rendering) via the `terrain` GeoJSON property and the `SimEngine.WorldGen`
+> pipeline.
+
+---
+
 ## Multiplayer Architecture Plan
 
 ### Network Model: Local Server
