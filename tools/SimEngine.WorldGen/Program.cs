@@ -198,7 +198,7 @@ await using (var writer = new Utf8JsonWriter(countryStream, new JsonWriterOption
         writer.WriteString("tag", code);
         writer.WriteString("name", name);
         // Heuristic: no city-point join, so the capital defaults to the
-        // country's lowest owned province_id. Documented in TestAssets/README.md.
+        // country's lowest owned province_id. Documented in data/README.md.
         writer.WriteNumber("capital", owns[0]);
         writer.WriteStartArray("owns");
         foreach (var id in owns)

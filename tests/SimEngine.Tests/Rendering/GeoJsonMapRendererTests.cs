@@ -40,6 +40,44 @@ public sealed class GeoJsonMapRendererTests : IDisposable
         Assert.Equal(pngSignature, header);
     }
 
+    [Fact]
+    public void WhenMarineOverlayProvidedThenRenderedOutputChanges()
+    {
+        const string world = """
+            {"type":"FeatureCollection","features":[
+              {"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]]]}}
+            ]}
+            """;
+        const string marine = """
+            {"type":"FeatureCollection","features":[
+              {"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[2,2],[8,2],[8,8],[2,8],[2,2]]]}}
+            ]}
+            """;
+        var options = new MapRenderOptions { Width = 256 };
+
+        var withoutOverlay = RenderToBytes(world, options, marineOverlay: null);
+        var withOverlay = RenderToBytes(world, options, marineOverlay: marine);
+
+        Assert.NotEqual(withoutOverlay, withOverlay);
+    }
+
+    private static byte[] RenderToBytes(string worldGeoJson, MapRenderOptions options, string? marineOverlay)
+    {
+        using var world = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(worldGeoJson));
+        using var output = new MemoryStream();
+        if (marineOverlay is null)
+        {
+            GeoJsonMapRenderer.Render(world, output, options);
+        }
+        else
+        {
+            using var marine = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(marineOverlay));
+            GeoJsonMapRenderer.Render(world, output, options, marine);
+        }
+
+        return output.ToArray();
+    }
+
     private string CreateOutputPath()
     {
         var path = GameTempDirectory.GetPath($"map-test-{Guid.NewGuid():N}.png");

@@ -29,6 +29,15 @@ public sealed record MapRenderOptions
     public float BorderThickness { get; init; } = 1f;
 
     /// <summary>
+    /// Outline color for marine-region borders drawn as an overlay. Only the
+    /// borders are drawn (no fill), so these features need no ids or grouping.
+    /// </summary>
+    public Color MarineBorderColor { get; init; } = Color.FromPixel(new Rgba32(90, 140, 190));
+
+    /// <summary>Marine-region border thickness in pixels.</summary>
+    public float MarineBorderThickness { get; init; } = 1f;
+
+    /// <summary>
     /// Feature property used to group provinces into a shared fill color
     /// (e.g. <c>adm0_a3</c> colors by country). When the property is missing
     /// each feature falls back to its own index, yielding per-province colors.
@@ -48,18 +57,45 @@ public sealed record MapRenderOptions
 public static class GeoJsonMapRenderer
 {
     /// <summary>Renders <paramref name="geoJsonPath"/> to a PNG at <paramref name="outputPngPath"/>.</summary>
-    public static void RenderFileToPng(string geoJsonPath, string outputPngPath, MapRenderOptions? options = null)
+    /// <param name="geoJsonPath">Province polygon GeoJSON to render.</param>
+    /// <param name="outputPngPath">Destination PNG path.</param>
+    /// <param name="options">Optional render options.</param>
+    /// <param name="marineRegionsGeoJsonPath">
+    /// Optional GeoJSON whose feature borders are drawn as an overlay (e.g. marine
+    /// region / EEZ outlines). Only the borders are rendered.
+    /// </param>
+    public static void RenderFileToPng(
+        string geoJsonPath,
+        string outputPngPath,
+        MapRenderOptions? options = null,
+        string? marineRegionsGeoJsonPath = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(geoJsonPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPngPath);
 
         using var input = File.OpenRead(geoJsonPath);
         using var output = File.Create(outputPngPath);
-        Render(input, output, options);
+
+        if (!string.IsNullOrWhiteSpace(marineRegionsGeoJsonPath) && File.Exists(marineRegionsGeoJsonPath))
+        {
+            using var marine = File.OpenRead(marineRegionsGeoJsonPath);
+            Render(input, output, options, marine);
+        }
+        else
+        {
+            Render(input, output, options);
+        }
     }
 
     /// <summary>Renders a GeoJSON stream to a PNG written to <paramref name="outputPng"/>.</summary>
-    public static void Render(Stream geoJson, Stream outputPng, MapRenderOptions? options = null)
+    /// <param name="geoJson">Province polygon GeoJSON stream.</param>
+    /// <param name="outputPng">Destination PNG stream.</param>
+    /// <param name="options">Optional render options.</param>
+    /// <param name="marineOverlay">
+    /// Optional GeoJSON stream whose feature borders are drawn as an overlay.
+    /// Only the borders are rendered (no fill, no grouping).
+    /// </param>
+    public static void Render(Stream geoJson, Stream outputPng, MapRenderOptions? options = null, Stream? marineOverlay = null)
     {
         ArgumentNullException.ThrowIfNull(geoJson);
         ArgumentNullException.ThrowIfNull(outputPng);
@@ -71,12 +107,19 @@ public static class GeoJsonMapRenderer
             throw new InvalidOperationException("GeoJSON contained no renderable polygon features.");
         }
 
+        // Marine borders are framed to the province bounds; anything outside is
+        // clipped by the canvas, so a global EEZ file overlays cleanly on any world.
+        var marineFeatures = marineOverlay is null
+            ? []
+            : ReadFeatures(marineOverlay, options.GroupPropertyName);
+
         var bounds = GeoBounds.FromFeatures(features);
         var projector = new EquirectangularProjector(bounds, options.Width, options.Padding);
         var colors = BuildGroupColors(features);
 
         using var image = new Image<Rgba32>(projector.Width, projector.Height);
         var borderPen = Pens.Solid(options.BorderColor, options.BorderThickness);
+        var marinePen = Pens.Solid(options.MarineBorderColor, options.MarineBorderThickness);
         image.Mutate(ctx =>
         {
             ctx.Paint(canvas =>
@@ -104,6 +147,26 @@ public static class GeoJsonMapRenderer
                         var polygon = new Polygon(points);
                         canvas.Fill(fill, polygon);
                         canvas.Draw(borderPen, polygon);
+                    }
+                }
+
+                // Overlay: marine-region borders only (no fill, no ids).
+                foreach (var marine in marineFeatures)
+                {
+                    foreach (var ring in marine.ExteriorRings)
+                    {
+                        if (ring.Length < 3)
+                        {
+                            continue;
+                        }
+
+                        var points = new PointF[ring.Length];
+                        for (var p = 0; p < ring.Length; p++)
+                        {
+                            points[p] = projector.Project(ring[p].Lon, ring[p].Lat);
+                        }
+
+                        canvas.Draw(marinePen, new Polygon(points));
                     }
                 }
             });

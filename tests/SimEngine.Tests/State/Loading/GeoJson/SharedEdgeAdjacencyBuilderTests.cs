@@ -79,7 +79,7 @@ public sealed class SharedEdgeAdjacencyBuilderTests
     [Fact]
     public void Build_FourSquareGrid_ProducesFourEdges()
     {
-        // Same layout as TestAssets/grid4.geojson. Four 1x1 squares,
+        // Same layout as data/custom-test/grid4.geojson. Four 1x1 squares,
         // 4 shared edges, 0 corner-only contacts.
         var a = ReadPolygon("[[[0,1],[1,1],[1,2],[0,2],[0,1]]]");
         var b = ReadPolygon("[[[1,1],[2,1],[2,2],[1,2],[1,1]]]");

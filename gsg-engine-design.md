@@ -161,7 +161,7 @@ The geometry library decision and the GeoJSON pipeline. Gated on the state layer
 - **Adjacency-from-shared-edges** — `SharedEdgeAdjacencyBuilder` uses a snapped-segment hash (1e-7° grid, `~1 cm`). NTS `Touches` was rejected because Natural Earth is not watertight; the hash approach correctly connects provinces whose border coordinates differ by a few units in the 7th decimal place. A T-junction pre-pass handles the case where one polygon has a mid-edge vertex that the neighbour doesn't. Three-way segment collisions (data quirks) deterministically pick the first two owners.
 - **`WorldLoaders`** — composition helper (`LoadIntoState`) that drives the seed → `WorldBuilder` → `SimulationState` pipeline, replaying adjacency edges in a canonical `ProvinceId 1..N, b > a` order so the result is byte-identical across runs regardless of `FrozenDictionary` enumeration order.
 - **Determinism boundary** — NTS `double` math stays inside the loader; only `int` microdegrees and `(ProvinceId, ProvinceId)` edges cross into game state.
-- **Test assets** — `tests/SimEngine.Tests/TestAssets/grid4.geojson` (handcrafted 2×2 grid) and `germany_admin1.geojson` (16 Bundesländer curated from Natural Earth, ~311 KB). Integration test asserts ≥ 10 internal borders, mean degree 2–7, and byte-identical determinism on repeated loads. Reproduction command documented in `TestAssets/README.md`.
+- **Test assets** — `data/custom-test/grid4.geojson` (handcrafted 2×2 grid) and `data/germany-test/germany_admin1.geojson` (16 Bundesländer curated from Natural Earth, ~311 KB). Integration test asserts ≥ 10 internal borders, mean degree 2–7, and byte-identical determinism on repeated loads. Reproduction command documented in `data/README.md`.
 - **Terrain** — every loaded province is `Terrain.Land`. Sea provinces come from a separate dataset (future phase).
 
 #### Phase 1c — A* heuristic ✅
@@ -183,7 +183,7 @@ A playable harness. No rendering contract in the engine — this is a separate c
 - **Determinism boundary** — the console host sits *outside* determinism-sensitive code. Spectre does its own `double` math for layout; none of it feeds back into `SimulationState`. The seed used for `NewGame` is explicit and logged so runs are reproducible.
 - **Main menu** — Spectre `FigletText` title + `SelectionPrompt<string>`: **New Game** / **Load Game** / **Quit**. Load is disabled (greyed) until Phase 3 ships save/load.
 - **New Game flow** — chained Spectre prompts:
-  - World selector (`SelectionPrompt`): `grid4` (synthetic 2×2), `germany_admin1` (16 Bundesländer). Test asset paths resolved from the `SimEngine.Tests` `TestAssets` folder for now; a proper content search path lands with modding.
+  - World selector (`SelectionPrompt`): `grid4` (synthetic 2×2), `germany_admin1` (16 Bundesländer). World asset paths resolved from the `data/` content folders for now; a proper content search path lands with modding.
   - Start date (`TextPrompt<DateTimeOffset>` with default `1836-01-01`).
   - PRNG seed (`TextPrompt<ulong>` with default `0` → auto-generated; shown back to the player).
   - Build via `WorldLoaders.LoadIntoState` → construct `SimulationEngine` → transition into the game loop.

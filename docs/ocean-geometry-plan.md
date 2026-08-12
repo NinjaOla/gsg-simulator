@@ -79,7 +79,7 @@ it.
     introduced.
 12. Build the solution and run loader, adjacency, and renderer test suites to
     confirm determinism and no regressions.
-13. Update `tests/SimEngine.Tests/TestAssets/README.md` and this doc to describe
+13. Update `data/README.md` and this doc to describe
     the `terrain` property and ocean generation flow.
 
 ## Risks & Open Questions

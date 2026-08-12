@@ -38,4 +38,11 @@ public static class WorldCatalog
         ArgumentNullException.ThrowIfNull(asset);
         return Path.Combine(AppContext.BaseDirectory, "Worlds", asset.CountryFileName);
     }
+
+    /// <summary>
+    /// Resolves the on-disk marine-region (EEZ) GeoJSON path. This is a single
+    /// global dataset shared by all worlds, used only to draw marine borders.
+    /// </summary>
+    public static string ResolveMarineRegionsPath() =>
+        Path.Combine(AppContext.BaseDirectory, "Worlds", "marineregions", "world_eez.geojson");
 }

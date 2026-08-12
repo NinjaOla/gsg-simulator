@@ -61,9 +61,12 @@ public sealed class MapCommand : ICommand
         var outputPath = GameTempDirectory.GetPath(
             $"map-{worldId}-{DateTime.Now:yyyyMMdd-HHmmss}.png");
 
+        var marineRegionsPath = WorldCatalog.ResolveMarineRegionsPath();
+        var marineOverlay = File.Exists(marineRegionsPath) ? marineRegionsPath : null;
+
         try
         {
-            GeoJsonMapRenderer.RenderFileToPng(geoJsonPath, outputPath, new MapRenderOptions { Width = width });
+            GeoJsonMapRenderer.RenderFileToPng(geoJsonPath, outputPath, new MapRenderOptions { Width = width }, marineOverlay);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or JsonException)
         {

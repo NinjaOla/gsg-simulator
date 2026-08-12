@@ -23,35 +23,35 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\grid4.geojson">
+    <Content Include="..\..\data\custom-test\grid4.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\grid4.geojson</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\germany_admin1.geojson">
+    <Content Include="..\..\data\germany-test\germany_admin1.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\germany_admin1.geojson</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\europe_west_admin1.geojson">
+    <Content Include="..\..\data\europe-west\europe_west_admin1.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\europe_west_admin1.geojson</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\world_admin1.geojson">
+    <Content Include="..\..\data\full-world\states\world_admin1.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\world_admin1.geojson</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\grid4.countries.json">
+    <Content Include="..\..\data\custom-test\grid4.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\grid4.countries.json</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\germany_admin1.countries.json">
+    <Content Include="..\..\data\germany-test\germany_admin1.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\germany_admin1.countries.json</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\europe_west_admin1.countries.json">
+    <Content Include="..\..\data\europe-west\europe_west_admin1.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\europe_west_admin1.countries.json</Link>
     </Content>
-    <Content Include="..\..\tests\SimEngine.Tests\TestAssets\world_admin1.countries.json">
+    <Content Include="..\..\data\full-world\countries\world_admin1.countries.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>Worlds\world_admin1.countries.json</Link>
     </Content>
