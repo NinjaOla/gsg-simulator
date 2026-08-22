@@ -56,3 +56,5 @@ public sealed class GameWorldSeederTests
             state.Relationships.GetOutbound(beta.Id, RelationshipLabel.HasCapital).ToArray());
     }
 }
+
+

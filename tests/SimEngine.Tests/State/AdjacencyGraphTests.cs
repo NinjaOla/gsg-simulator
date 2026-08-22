@@ -134,3 +134,5 @@ public sealed class AdjacencyGraphTests
         Assert.Empty(graph.NeighborsOf(new ProvinceId(7)));
     }
 }
+
+

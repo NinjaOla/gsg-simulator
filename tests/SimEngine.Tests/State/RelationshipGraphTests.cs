@@ -120,3 +120,5 @@ public sealed class RelationshipGraphTests
         Assert.Empty(graph.GetInbound(D, RelationshipLabel.Vassal));
     }
 }
+
+

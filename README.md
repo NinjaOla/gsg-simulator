@@ -207,28 +207,25 @@ Planned world-data features and their sequenced implementation slices:
 
 ---
 
-## Multiplayer Architecture Plan
+## Multiplayer Architecture
 
-### Network Model: Local Server
+### Network Model: Local Server + Local Client
 
-Single-player and multiplayer use the **same architecture**. A game always runs as a server (Orleans silo) with one or more clients connected to it. In single-player the silo runs in-process — no separate executable, no network overhead.
+Single-player and multiplayer use the **same client/server model**. The simulation always runs in a server-side Akka actor system, and every UI talks to it through a separate client actor system. For local single-player that still means **server process + client process** semantics, even when both are started by the same executable on the same machine.
 
 ```
-Single-player                          Multiplayer (host + play)
-┌────────────┐  in-process  ┌───────┐  ┌────────────┐  network  ┌───────┐
-│ Console /  │◄───────────►│ Silo  │  │ Host UI    │◄────────►│ Silo  │
-│ Game UI    │              │       │  │ (local)    │           │       │
-└────────────┘              └───────┘  └────────────┘           │       │
-                                       ┌────────────┐  network  │       │
-                                       │ Player 2   │◄────────►│       │
-                                       └────────────┘           └───────┘
-
-Dedicated server: silo-only process, no UI. All players connect remotely.
+Single-player (localhost)                  Multiplayer / dedicated server
+┌──────────────┐  Akka.Remote  ┌──────────────┐  ┌──────────────┐  network  ┌──────────────┐
+│ Console/UI   │◄────────────►│ Server       │  │ Client/UI    │◄────────►│ Server       │
+│ ClientSystem │              │ ServerSystem │  │ ClientSystem │          │ ServerSystem │
+└──────────────┘              └──────────────┘  └──────────────┘          └──────────────┘
+                                                                     ┌──────────────┐
+                                                                     │ Client/UI 2  │
+                                                                     │ ClientSystem │
+                                                                     └──────────────┘
 ```
 
-**Why:** One code path for SP and MP. The `ConsoleHost` becomes just another client — it renders from the synced grain/stream/`SessionStateCache` path, not from a private in-process engine view. No separate single-player logic to maintain.
-
-**Status:** The transport (delta sync, network silo hosting) is in place through step 12. Step 13 removes the last in-process engine backdoor so the host's own client renders like a remote one, adds the content-hash compatibility gate, and wires the SP (host-owned) / MP (detached/shared `--server`) lifecycles. See the implementation plan for the sequenced slices.
+**Why:** this prevents a separate single-player path from emerging. The local host must go through the same message contracts, serialization, and state sync flow as a remote client.
 
 ---
 
@@ -236,22 +233,67 @@ Dedicated server: silo-only process, no UI. All players connect remotely.
 
 | Project | Purpose | Dependencies |
 |---------|---------|-------------|
-| **`SimEngine.Contracts`** | Orleans grain interfaces (`IGameSessionGrain`, `IPlayerGrain`, `ILobbyGrain`) and shared DTOs/commands. Pure interfaces — no implementation, no framework dependency beyond Orleans abstractions. | `SimEngine` (for `EntityId`, `ISimulationEvent`) |
-| **`SimEngine.Server`** | Orleans silo host. Contains grain implementations that own `SimulationEngine` instances. Runs the tick loop, applies player commands, pushes state deltas. | `SimEngine`, `SimEngine.Game`, `SimEngine.Contracts`, `Microsoft.Orleans.Server` |
-| **`SimEngine.Client`** | Orleans client helper library. Provides a typed client that connects to a local or remote silo. Used by `ConsoleHost`, future Stride UI, or any other frontend. | `SimEngine.Contracts`, `Microsoft.Orleans.Client` |
-| **`SimEngine.Server.Tests`** | Integration tests for grains using Orleans `TestCluster`. | `SimEngine.Server`, `SimEngine.Contracts`, `xunit.v3` |
+| **`SimEngine.Contracts`** | Shared message contracts, DTOs, session commands, state snapshots. Keep these free of engine-hosting details so both client and server can depend on them cleanly. | `SimEngine` (for IDs/events shared across boundaries) |
+| **`SimEngine.Server`** | Akka.NET server host. Runs the server actor system, lobby/session actors, country actors, and owns authoritative `SimulationEngine` instances. | `SimEngine`, `SimEngine.Game`, `SimEngine.Contracts`, Akka server packages |
+| **`SimEngine.Client`** | Akka.NET client helper library. Owns the client actor system, connects to a local or remote server, and exposes a typed API for UI frontends. | `SimEngine.Contracts`, Akka client/remoting packages |
+| **`SimEngine.Server.Tests`** | Actor and integration tests around session flow, command routing, and client/server interaction. | `SimEngine.Server`, `SimEngine.Contracts`, test packages |
 
 Updated dependency graph:
 
 ```
-SimEngine (engine core, no actor/Orleans dependency)
+SimEngine (engine core, no Akka dependency)
   └── SimEngine.Game (game rules)
-        └── SimEngine.Contracts (grain interfaces, commands, DTOs)
-              ├── SimEngine.Server (grain implementations, silo host)
+        └── SimEngine.Contracts (messages, commands, DTOs)
+              ├── SimEngine.Server (Akka host, sessions, lobby, country actors)
               │     └── SimEngine.Server.Tests
-              └── SimEngine.Client (connection helper)
-                    └── SimEngine.ConsoleHost (uses Client to talk to grains)
+              └── SimEngine.Client (Akka client connection helper)
+                    └── SimEngine.ConsoleHost (uses Client to talk to server)
 ```
+
+---
+
+### Server-Authoritative Session Model
+
+`SimulationEngine` remains the only simulation authority. Actors do **not** mutate simulation state directly.
+
+Instead:
+
+1. client/player actors and AI/country actors observe synced state,
+2. they issue immutable commands,
+3. the authoritative session actor queues those commands,
+4. the session actor publishes them to the engine's existing event bus,
+5. the engine advances one deterministic tick.
+
+That preserves the current engine model while using actors as the running parts of the application.
+
+---
+
+### Actor Topology
+
+```
+ActorSystem (server)
+│
+├── /user/lobby
+│     └── LobbyActor
+│           - lists/creates sessions
+│           - routes join requests
+│
+└── /user/sessions/{sessionId}
+      └── GameSessionActor
+            - owns SimulationEngine
+            - owns tick timer / lockstep gate
+            - owns command queue
+            - broadcasts snapshots
+            │
+            ├── country-{id}
+            │     ├── AICountryActor
+            │     └── PlayerCountryActor
+            │
+            └── observer-{playerId}
+                  └── pushes session updates to connected clients
+```
+
+On the client side, a separate actor system hosts a client/session bridge actor that connects to the lobby/session actors and feeds state into the UI.
 
 ---
 
@@ -259,38 +301,82 @@ SimEngine (engine core, no actor/Orleans dependency)
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| **Simulation authority** | Server-authoritative. `SimulationEngine` runs only inside `GameSessionGrain`. | Determinism, anti-cheat, single source of truth. |
-| **Tick model** | Lockstep (PDX-style). All player commands for tick N are collected, then `Step()` runs, then results are broadcast. | Preserves deterministic replay. Players at different speeds submit commands at different rates but the simulation processes them in order. |
-| **Command flow** | Player → `PlayerGrain` → `GameSessionGrain` command queue → `DeferredEventBus` → systems consume during `Execute()`. | Reuses existing event bus. Player and AI commands are identical `ISimulationEvent` records. |
-| **State sync** | After each tick (or batch of ticks), the silo pushes a state delta/snapshot to connected player observers via Orleans Streams. | Clients are thin — they render state, they don't simulate. |
-| **Static content** | Static/content data (map/geography, mods) is **not** sent over the wire. Each client loads it locally and exchanges only a content hash (building on `GameManifest` `ContentHash`/`ContentVersion`/`EnabledFeatures`); the server enforces it as a compatibility gate on join and rejects mismatches. | Keeps snapshots tiny at continent scale and protects deterministic lockstep — a client with different content can't desync the sim. |
-| **Server lifecycle** | Single-player uses a host-owned server (co-hosted silo that dies with the client). Multiplayer spawns/attaches a detached/shared `--server` process that survives independently so multiple clients can attach. | One mechanism, two lifetimes: zero-config SP, persistent MP host. |
-| **Persistence** | `GameSessionGrain` calls `SimulationEngine.Save()` to a stream, stored via Orleans grain persistence (e.g., file system, Azure Blob, ADO.NET). | Reuses existing save/load infrastructure. Auto-save every N ticks configurable. |
-| **In-process mode** | For single-player and `ConsoleHost`, the silo is hosted in-process using `UseLocalhostClustering()`. No network serialization overhead. | Zero-config SP experience. Same grain code path. |
+| **Runtime model** | Akka.NET end-to-end for lobby, sessions, country actors, and client/server messaging. | One framework and one actor model across the whole app. |
+| **Single-player topology** | Still client/server. Local SP uses a local server system and a separate client system communicating over the same contracts. | Minimizes SP/MP divergence and catches boundary issues early. |
+| **Simulation authority** | Server-authoritative. `SimulationEngine` lives inside `GameSessionActor` only. | Determinism, anti-cheat, single source of truth. |
+| **Tick model** | Lockstep. Commands for tick N are collected, then the session actor advances the engine and broadcasts results. | Preserves deterministic replay. |
+| **Command flow** | Client/player actor or country actor → `GameSessionActor` command queue → `DeferredEventBus` → systems consume during `Execute()`. | Reuses existing engine/event design. |
+| **Country execution model** | Countries can be actors (AI or player-controlled), but they only issue commands. | Good fit for autonomous decision making without letting actors own authoritative state. |
+| **State sync** | The server pushes snapshots or deltas to connected clients/observer actors after each tick. | Clients stay thin and render synchronized state only. |
+| **Static content** | Static/content data is not sent over the wire. Each client loads content locally and exchanges only a content hash/version/feature signature. | Keeps traffic low and blocks mismatched-content desyncs. |
+| **Server lifecycle** | Single-player starts a host-owned local server; multiplayer can use a detached shared server process. | Same architecture, different hosting lifecycle. |
+| **Persistence** | Session persistence wraps `SimulationEngine.Save()` / `Load()` instead of inventing a second format. | Reuses the deterministic snapshot infrastructure already in the engine. |
 
 ---
 
-### Grain Design
+### Session and Country Actor Roles
 
-#### `IGameSessionGrain` (one per active game)
+#### `LobbyActor`
 
-- **State:** owns a `SimulationEngine` instance, player list, game speed, command queue.
-- **Methods:** `JoinAsync`, `LeaveAsync`, `SubmitCommandAsync<T>(T command)`, `StepAsync`, `SetSpeedAsync`, `SaveAsync`, `GetStateSnapshotAsync`.
-- **Tick loop:** a grain timer calls `StepAsync` at the current game speed. Commands are drained from the queue and published to the event bus before each `Step()`.
+- Lists joinable games
+- Creates new sessions
+- Resolves a player/client to a target session actor
 
-#### `IPlayerGrain` (one per player, virtual — activated on demand)
+#### `GameSessionActor`
 
-- **State:** player identity, current session ID, pending commands.
-- **Methods:** `JoinSessionAsync`, `LeaveSessionAsync`, `SendCommandAsync`.
-- Acts as a buffer and authentication boundary before forwarding to the session grain.
+- Owns one authoritative `SimulationEngine`
+- Owns the session tick cadence and command queue
+- Applies player/AI commands to the event bus before stepping the engine
+- Broadcasts state snapshots/deltas after each tick
+- Spawns and supervises per-country and per-observer child actors
 
-#### `ILobbyGrain` (singleton)
+#### `CountryActor`
 
-- **State:** list of active/joinable sessions with metadata (world name, player count, speed).
-- **Methods:** `ListGamesAsync`, `CreateGameAsync`, `RemoveGameAsync`.
+- Represents one country/nation at the application layer
+- Has AI or player-control implementations
+- Observes state and issues commands
+- Never directly mutates the engine state
 
-> **Implementation plan:** See [`docs/multiplayer-implementation-plan.md`](docs/multiplayer-implementation-plan.md) for phased roadmap, package requirements, and migration steps.
+#### `ObserverActor` / client bridge actor
 
+- Delivers state updates from the authoritative session to the connected UI
+- Keeps the frontend decoupled from direct engine access
+
+---
+
+> **Implementation plan:** See [`docs/multiplayer-implementation-plan.md`](docs/multiplayer-implementation-plan.md) for phased rollout, package requirements, and migration steps.
+
+---
+
+### Current State (as built)
+
+The Akka.NET re-platform described above is implemented. The runtime is now Akka.NET end-to-end (Orleans has been fully removed).
+
+**Projects as they exist today:**
+
+| Project | Role |
+|---------|------|
+| `SimEngine` | Engine core (no Akka dependency) |
+| `SimEngine.Game` | Game rules (no Akka dependency) |
+| `SimEngine.Contracts` | Shared message protocols (`SessionProtocol`, `PlayerProtocol`, `LobbyProtocol`), DTOs, routing markers, and `AkkaExecutionMode` |
+| `SimEngine.Server` | Akka host: session/player/lobby actors, message extractors, `GenericChildPerEntityParent`, `WithSimEngineActors`, and `ILocalEngineProvider` |
+| `SimEngine.Client` | Client facade: `GameClient` (local registry or remote path) and per-session `SessionClient` (`Ask`-based) |
+| `SimEngine.Game.Ui.Console` | Console UI; hosts a local server and connects via `GameClient`. `--server`/`--host`/`--port` run a detached remoting server |
+| `SimEngine.Game.Ui.Stride` | Stride globe UI frontend |
+| `SimEngine.Server.Tests` | Actor tests using a raw `ActorSystem` + `Ask` (`ServerTestHarness`) |
+| `tools/SimEngine.MpSpike` | Latency spike tool measuring direct/in-proc/remote advance round-trips |
+
+**What works now:**
+
+- **Session actor** (`GameSessionActor`) owns the authoritative `SimulationEngine`; clients only send messages.
+- **Two execution modes** via `WithSimEngineActors(AkkaExecutionMode)`: `LocalTest` uses `GenericChildPerEntityParent` (child-per-entity); `Clustered` uses a sharded region.
+- **Command flow:** commands are queued on the session actor and applied before each `Advance`.
+- **Content-hash gate:** static content is not sent over the wire — only a content hash is exchanged and enforced on join.
+- **Events-out:** subscribers receive per-tick `SessionStreamUpdate` broadcasts (no polling).
+- **Persistence:** save/load wraps `SimulationEngine.Save()`/`Load()`.
+- **Determinism:** stepping through the session actor produces byte-identical saves to a directly-constructed engine.
+
+---
 
 ## Solution
 

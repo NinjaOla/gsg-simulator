@@ -160,3 +160,5 @@ public sealed class GeoJsonWorldLoaderTests
         Assert.Throws<ArgumentNullException>(() => loader.Load(null!));
     }
 }
+
+

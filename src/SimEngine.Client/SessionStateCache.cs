@@ -9,8 +9,8 @@ namespace SimEngine.Client;
 /// stream. This lets a client render without holding an in-process engine view.
 /// </summary>
 /// <remarks>
-/// Thread-safe: <see cref="Apply"/> runs on Orleans stream-callback threads
-/// while a render loop reads concurrently, so all access is guarded.
+/// Thread-safe: <see cref="Apply"/> runs on Akka dispatcher threads while a
+/// render loop reads concurrently, so all access is guarded.
 /// </remarks>
 public sealed class SessionStateCache
 {

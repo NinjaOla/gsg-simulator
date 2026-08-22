@@ -76,3 +76,5 @@ internal readonly record struct SimulationContextSnapshot(
     DateTimeOffset TickStart,
     DateTimeOffset TickEnd,
     int ThreadId);
+
+

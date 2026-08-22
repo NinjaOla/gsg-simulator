@@ -1,57 +1,101 @@
+using Akka.Actor;
+using Akka.Cluster.Hosting;
+using Akka.Cluster.Sharding;
+using Akka.Hosting;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using SimEngine.Contracts;
+using SimEngine.Server.Actors;
 
 namespace SimEngine.Server;
 
 /// <summary>
-/// Extension methods for configuring the SimEngine Orleans silo.
+/// Akka.Hosting configuration for the SimEngine server actor topology: the
+/// session entity host (the sole simulation authority), the player entity host,
+/// and the singleton lobby. Works in both local single-player/test mode and in
+/// clustered multiplayer mode.
 /// </summary>
 public static class SimEngineServerExtensions
 {
-    private const string PubSubStoreName = "PubSubStore";
-
     /// <summary>
-    /// Adds a SimEngine silo to the host. With no options the silo uses Orleans
-    /// localhost clustering on its default ports with the session stream enabled
-    /// — suitable for in-process single-player and for a loopback network host.
-    /// Pass <paramref name="configure"/> to listen on custom ports (network mode).
-    /// </summary>
-    public static IHostBuilder UseSimEngineSilo(
-        this IHostBuilder builder,
-        Action<SimEngineSiloOptions>? configure = null)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-
-        var options = new SimEngineSiloOptions();
-        configure?.Invoke(options);
-
-        builder.UseOrleans(silo =>
-        {
-            silo.UseLocalhostClustering(
-                siloPort: options.SiloPort,
-                gatewayPort: options.GatewayPort);
-
-            if (options.EnableStreams)
-            {
-                silo.AddMemoryStreams(Contracts.SessionStreams.ProviderName)
-                    .AddMemoryGrainStorage(PubSubStoreName);
-            }
-        });
-
-        builder.ConfigureServices(services => services.AddSimEngineServer());
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Registers SimEngine server services on an existing service collection.
-    /// Used by <see cref="UseSimEngineSilo"/> and by test silo configurators.
+    /// Registers the <see cref="ILocalEngineProvider"/> used by in-process
+    /// clients to read engine state directly. Call before configuring Akka.
     /// </summary>
     public static IServiceCollection AddSimEngineServer(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
-
         services.AddSingleton<ILocalEngineProvider, LocalEngineProvider>();
         return services;
+    }
+
+    /// <summary>
+    /// Registers the SimEngine server actors on the Akka configuration builder.
+    /// </summary>
+    public static AkkaConfigurationBuilder WithSimEngineActors(
+        this AkkaConfigurationBuilder builder,
+        AkkaExecutionMode executionMode = AkkaExecutionMode.LocalTest,
+        string? clusterRole = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+
+        if (executionMode == AkkaExecutionMode.LocalTest)
+        {
+            builder.WithActors((system, registry, resolver) =>
+            {
+                var engineProvider = resolver.GetService<ILocalEngineProvider>();
+
+                var sessions = system.ActorOf(
+                    GenericChildPerEntityParent.CreateProps(
+                        new SessionMessageExtractor(),
+                        entityId => GameSessionActor.Props(entityId, engineProvider)),
+                    ActorNames.Sessions);
+                registry.Register<SessionActorsMarker>(sessions);
+
+                var players = system.ActorOf(
+                    GenericChildPerEntityParent.CreateProps(
+                        new PlayerMessageExtractor(),
+                        entityId => PlayerActor.Props(entityId, sessions)),
+                    ActorNames.Players);
+                registry.Register<PlayerActorsMarker>(players);
+
+                var lobby = system.ActorOf(LobbyActor.Props(sessions), ActorNames.Lobby);
+                registry.Register<LobbyMarker>(lobby);
+            });
+        }
+        else
+        {
+            var shardOptions = new ShardOptions
+            {
+                StateStoreMode = StateStoreMode.DData,
+                RememberEntities = false,
+                Role = clusterRole,
+            };
+
+            builder
+                .WithShardRegion<SessionActorsMarker>(
+                    ActorNames.Sessions,
+                    (_, _, resolver) =>
+                    {
+                        var engineProvider = resolver.GetService<ILocalEngineProvider>();
+                        return entityId => GameSessionActor.Props(entityId, engineProvider);
+                    },
+                    new SessionMessageExtractor(),
+                    shardOptions)
+                .WithActors((system, registry, _) =>
+                {
+                    var sessions = registry.Get<SessionActorsMarker>();
+
+                    var players = system.ActorOf(
+                        GenericChildPerEntityParent.CreateProps(
+                            new PlayerMessageExtractor(),
+                            entityId => PlayerActor.Props(entityId, sessions)),
+                        ActorNames.Players);
+                    registry.Register<PlayerActorsMarker>(players);
+
+                    var lobby = system.ActorOf(LobbyActor.Props(sessions), ActorNames.Lobby);
+                    registry.Register<LobbyMarker>(lobby);
+                });
+        }
+
+        return builder;
     }
 }

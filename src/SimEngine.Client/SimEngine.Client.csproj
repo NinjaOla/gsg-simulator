@@ -5,7 +5,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Orleans.Client" />
+    <PackageReference Include="Akka" />
+    <PackageReference Include="Akka.Hosting" />
+    <PackageReference Include="Akka.Remote" />
+    <PackageReference Include="Akka.Cluster" />
+    <PackageReference Include="Akka.Cluster.Hosting" />
   </ItemGroup>
 
   <ItemGroup>

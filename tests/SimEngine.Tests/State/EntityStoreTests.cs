@@ -144,3 +144,5 @@ public sealed class EntityStoreTests
         Assert.Equal(1, store.CountOf<TagB>());
     }
 }
+
+

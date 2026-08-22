@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <RootNamespace>SimEngine.Game.Ui.Stride</RootNamespace>
+        <AssemblyName>SimEngine.Game.Ui.Stride</AssemblyName>
+        <NoWarn>$(NoWarn);NU1901;NU1903</NoWarn>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Stride.CommunityToolkit.Windows" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="..\..\data\custom-test\grid4.geojson">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>Worlds\grid4.geojson</Link>
+        </Content>
+        <Content Include="..\..\data\full-world\states\world_admin1.geojson">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <Link>Worlds\world_admin1.geojson</Link>
+        </Content>
+    </ItemGroup>
+
+</Project>

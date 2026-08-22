@@ -1,6 +1,4 @@
-using Microsoft.Extensions.Configuration;
-using Orleans.Streams;
-using Orleans.TestingHost;
+using Akka.Actor;
 using SimEngine.Client;
 using SimEngine.Contracts;
 using Xunit;
@@ -8,8 +6,8 @@ using Xunit;
 namespace SimEngine.Server.Tests;
 
 /// <summary>
-/// Proves the events-out path: a client subscribed to the per-session stream
-/// receives tick updates (with game events) pushed by the grain after a step,
+/// Proves the events-out path: an actor subscribed to a session receives tick
+/// updates (with game events) pushed by the session actor after an advance,
 /// without polling.
 /// </summary>
 public sealed class GameSessionStreamTests : IAsyncLifetime
@@ -17,88 +15,46 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
     private const string WorldId = "grid4";
     private static readonly DateTimeOffset StartDate = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
-    private TestCluster _cluster = null!;
-
-    private sealed class SiloConfigurator : ISiloConfigurator
-    {
-        public void Configure(ISiloBuilder siloBuilder)
-        {
-            siloBuilder
-                .AddMemoryStreams(SessionStreams.ProviderName)
-                .AddMemoryGrainStorage("PubSubStore");
-        }
-    }
-
-    private sealed class ClientConfigurator : IClientBuilderConfigurator
-    {
-        public void Configure(IConfiguration configuration, IClientBuilder clientBuilder)
-        {
-            clientBuilder.AddMemoryStreams(SessionStreams.ProviderName);
-        }
-    }
+    private ServerTestHarness _harness = null!;
 
     public async ValueTask InitializeAsync()
     {
-        var builder = new TestClusterBuilder();
-        builder.AddSiloBuilderConfigurator<SiloConfigurator>();
-        builder.AddClientBuilderConfigurator<ClientConfigurator>();
-        _cluster = builder.Build();
-        await _cluster.DeployAsync();
+        _harness = await ServerTestHarness.StartAsync(TestContext.Current.CancellationToken);
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _cluster.StopAllSilosAsync();
+        await _harness.DisposeAsync();
     }
 
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
     [Fact]
-    public async Task StepAsync_PushesTickUpdateAndEvents_ToSubscribedClient()
+    public async Task Advance_PushesTickUpdateAndEvents_ToSubscribedActor()
     {
         const string sessionId = "stream-session";
-        var grain = _cluster.GrainFactory.GetGrain<IGameSessionGrain>(sessionId);
-        await grain.InitializeAsync(WorldId, StartDate, seed: 42);
+        var session = _harness.Client.GetSession(sessionId);
+        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
 
-        var received = new List<SessionStreamUpdate>();
-        var stream = _cluster.Client
-            .GetStreamProvider(SessionStreams.ProviderName)
-            .GetStream<SessionStreamUpdate>(SessionStreams.For(sessionId));
+        var collector = new UpdateCollector();
+        var subscriber = _harness.System.ActorOf(Props.Create(() => new CollectorActor(collector)));
 
-        var handle = await stream.SubscribeAsync((update, _) =>
-        {
-            lock (received)
-            {
-                received.Add(update);
-            }
-
-            return Task.CompletedTask;
-        });
-
+        await session.SubscribeAsync(subscriber, Ct);
         try
         {
             // 40 ticks crosses a month boundary, so EconomySystem emits income events.
-            await grain.StepAsync(40);
+            await session.AdvanceAsync(40, Ct);
 
-            await WaitUntilAsync(() =>
-            {
-                lock (received)
-                {
-                    return received.Count > 0;
-                }
-            });
+            await WaitUntilAsync(() => collector.Count > 0);
 
-            SessionStreamUpdate update;
-            lock (received)
-            {
-                update = received[^1];
-            }
-
+            var update = collector.Last!;
             Assert.Equal(40, update.Tick.TickNumber);
             Assert.Equal(40, update.Tick.TicksExecuted);
             Assert.Contains(update.Events, e => e.Contains("collected", StringComparison.Ordinal));
         }
         finally
         {
-            await handle.UnsubscribeAsync();
+            await session.UnsubscribeAsync(subscriber, Ct);
         }
     }
 
@@ -106,11 +62,11 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
     public async Task DeltaSync_SnapshotThenStreamUpdates_KeepClientCacheCurrent()
     {
         const string sessionId = "delta-session";
-        var grain = _cluster.GrainFactory.GetGrain<IGameSessionGrain>(sessionId);
-        await grain.InitializeAsync(WorldId, StartDate, seed: 42);
+        var session = _harness.Client.GetSession(sessionId);
+        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
 
         // A client connects: fetch the baseline snapshot, then subscribe for deltas.
-        var snapshot = await grain.GetSnapshotAsync();
+        var snapshot = await session.GetSnapshotAsync(Ct);
         var cache = new SessionStateCache(snapshot);
 
         Assert.Equal(0, cache.TickNumber);
@@ -119,20 +75,13 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
         Assert.Equal(0L, alphaSeeded.FundsE2);
         Assert.Equal(0L, betaSeeded.FundsE2);
 
-        var stream = _cluster.Client
-            .GetStreamProvider(SessionStreams.ProviderName)
-            .GetStream<SessionStreamUpdate>(SessionStreams.For(sessionId));
+        var subscriber = _harness.System.ActorOf(Props.Create(() => new CacheApplyActor(cache)));
 
-        var handle = await stream.SubscribeAsync((update, _) =>
-        {
-            cache.Apply(update);
-            return Task.CompletedTask;
-        });
-
+        await session.SubscribeAsync(subscriber, Ct);
         try
         {
             // 40 ticks crosses a month boundary, so EconomySystem changes treasury.
-            await grain.StepAsync(40);
+            await session.AdvanceAsync(40, Ct);
 
             await WaitUntilAsync(() => cache.TickNumber == 40);
 
@@ -142,13 +91,13 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
             Assert.True(betaUpdated.FundsE2 > 0);
 
             // The cache must match the authoritative engine snapshot.
-            var authoritative = await grain.GetSnapshotAsync();
+            var authoritative = await session.GetSnapshotAsync(Ct);
             Assert.Equal(authoritative.Countries.Single(c => c.Tag == "ALP").FundsE2, alphaUpdated.FundsE2);
             Assert.Equal(authoritative.Countries.Single(c => c.Tag == "BET").FundsE2, betaUpdated.FundsE2);
         }
         finally
         {
-            await handle.UnsubscribeAsync();
+            await session.UnsubscribeAsync(subscriber, Ct);
         }
     }
 
@@ -164,6 +113,48 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
             }
 
             await Task.Delay(100, ct);
+        }
+    }
+
+    private sealed class UpdateCollector
+    {
+        private readonly object _gate = new();
+        private SessionStreamUpdate? _last;
+        private int _count;
+
+        public int Count
+        {
+            get { lock (_gate) { return _count; } }
+        }
+
+        public SessionStreamUpdate? Last
+        {
+            get { lock (_gate) { return _last; } }
+        }
+
+        public void Add(SessionStreamUpdate update)
+        {
+            lock (_gate)
+            {
+                _last = update;
+                _count++;
+            }
+        }
+    }
+
+    private sealed class CollectorActor : ReceiveActor
+    {
+        public CollectorActor(UpdateCollector collector)
+        {
+            Receive<SessionStreamUpdate>(collector.Add);
+        }
+    }
+
+    private sealed class CacheApplyActor : ReceiveActor
+    {
+        public CacheApplyActor(SessionStateCache cache)
+        {
+            Receive<SessionStreamUpdate>(cache.Apply);
         }
     }
 }

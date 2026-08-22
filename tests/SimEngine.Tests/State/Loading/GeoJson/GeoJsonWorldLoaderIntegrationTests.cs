@@ -103,3 +103,5 @@ public sealed class GeoJsonWorldLoaderIntegrationTests
         Assert.True(state.Adjacency.EdgeCount >= 10);
     }
 }
+
+

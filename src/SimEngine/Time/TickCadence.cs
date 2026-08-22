@@ -8,6 +8,8 @@ namespace SimEngine.Time;
 public enum TickCadence
 {
     EveryTick = 0,
+    Hourly,
+    EveryFourHours,
     Daily,
     Weekly,
     Monthly,

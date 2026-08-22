@@ -61,3 +61,5 @@ public sealed class SphereProjectionTests
         Assert.Equal(1.0, magnitude, Tolerance);
     }
 }
+
+

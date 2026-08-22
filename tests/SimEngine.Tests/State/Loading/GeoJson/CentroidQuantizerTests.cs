@@ -71,3 +71,5 @@ public sealed class CentroidQuantizerTests
         => new GeoJsonReader().Read<Geometry>(json)
            ?? throw new InvalidOperationException("Failed to parse geometry.");
 }
+
+

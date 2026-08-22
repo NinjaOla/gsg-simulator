@@ -24,3 +24,5 @@ public sealed class SystemRegistryTests
         Assert.Throws<ArgumentNullException>(() => registry.Add(null!));
     }
 }
+
+

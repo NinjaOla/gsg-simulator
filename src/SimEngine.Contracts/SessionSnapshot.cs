@@ -11,32 +11,23 @@ namespace SimEngine.Contracts;
 /// fetch this snapshot explicitly (see <c>IGameSessionGrain.GetSnapshotAsync</c>)
 /// and then subscribe for deltas.
 /// </remarks>
-[GenerateSerializer]
 public sealed record SessionSnapshot
 {
     /// <summary>Display name of the loaded world.</summary>
-    [Id(0)]
     public string WorldName { get; init; } = string.Empty;
 
     /// <summary>Current tick number at the time the snapshot was taken.</summary>
-    [Id(1)]
     public long TickNumber { get; init; }
 
     /// <summary>Current simulation date at the time the snapshot was taken.</summary>
-    [Id(2)]
     public DateTimeOffset CurrentDate { get; init; }
 
     /// <summary>Number of provinces in the world (static).</summary>
-    [Id(3)]
     public int ProvinceCount { get; init; }
 
     /// <summary>Number of undirected adjacency edges in the world (static).</summary>
-    [Id(4)]
     public int AdjacencyEdgeCount { get; init; }
 
     /// <summary>All countries with their baseline treasury balances.</summary>
-    /// <remarks>Concrete array: Orleans has no codec for the compiler-synthesized
-    /// wrapper that collection expressions produce for interface-typed targets.</remarks>
-    [Id(5)]
     public CountryState[] Countries { get; init; } = [];
 }

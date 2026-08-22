@@ -140,3 +140,5 @@ public sealed class DeferredEventBusTests
         Assert.Equal(new[] { 99 }, secondFlushSeen);
     }
 }
+
+

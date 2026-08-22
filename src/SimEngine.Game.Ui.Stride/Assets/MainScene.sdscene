@@ -1,0 +1,42 @@
+!SceneAsset
+Id: 00000000-0000-0000-0000-000000000005
+SerializedVersion: {Stride: 3.1.0.1}
+Tags: []
+ChildrenIds: []
+Offset: {X: 0.0, Y: 0.0, Z: 0.0}
+Hierarchy:
+    RootParts:
+        - ref!! 00000000-0000-0000-0000-000000000032
+        - ref!! 00000000-0000-0000-0000-000000000033
+    Parts:
+        -   Entity:
+                Id: 00000000-0000-0000-0000-000000000032
+                Name: Camera
+                Components:
+                    36b359e68b0290ee214d73ef7f738119: !TransformComponent
+                        Id: 00000000-0000-0000-0000-000000000037
+                        Position: {X: 0.0, Y: 0.0, Z: -10.0}
+                        Rotation: {X: 0.0, Y: 0.0, Z: 0.0, W: 1.0}
+                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
+                        Children: {}
+                    b726fc1f69cda6d15dd325f4bcba02c6: !CameraComponent
+                        Id: 00000000-0000-0000-0000-000000000038
+                        Name: null
+                        Projection: Perspective
+                        Slot: 00000000-0000-0000-0000-000000000010
+        -   Entity:
+                Id: 00000000-0000-0000-0000-000000000033
+                Name: Directional light
+                Components:
+                    a3294146fd186c7e2c4ba3f89c23bda9: !TransformComponent
+                        Id: 00000000-0000-0000-0000-00000000003e
+                        Position: {X: 0.0, Y: 2.0, Z: 0.0}
+                        Rotation: {X: 1.131334E-08, Y: -0.9659258, Z: -0.25881904, W: -4.222196E-08}
+                        Scale: {X: 1.0, Y: 1.0, Z: 1.0}
+                        Children: {}
+                    1392ba253a6ff62041052ab2bd43f031: !LightComponent
+                        Id: 00000000-0000-0000-0000-00000000003f
+                        Type: !LightDirectional
+                            Color: !ColorRgbProvider
+                                Value: {R: 1.0, G: 1.0, B: 1.0}
+                        Intensity: 5.0

@@ -6,7 +6,6 @@ namespace SimEngine.Contracts;
 /// or mods). The server rejects the join to protect deterministic lockstep:
 /// participants that disagree on static content cannot stay in sync.
 /// </summary>
-[GenerateSerializer]
 public sealed class ContentMismatchException : Exception
 {
     /// <summary>
@@ -22,11 +21,9 @@ public sealed class ContentMismatchException : Exception
     }
 
     /// <summary>The session's authoritative content hash.</summary>
-    [Id(0)]
     public string ExpectedHash { get; }
 
     /// <summary>The content hash the client presented on join.</summary>
-    [Id(1)]
     public string ActualHash { get; }
 
     private static string BuildMessage(string expectedHash, string actualHash) =>

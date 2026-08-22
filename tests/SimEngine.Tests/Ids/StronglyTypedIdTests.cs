@@ -63,3 +63,5 @@ public sealed class StronglyTypedIdTests
         Assert.Equal("E#42", new EntityId(42).ToString());
     }
 }
+
+
