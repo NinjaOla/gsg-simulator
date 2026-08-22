@@ -12,14 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <Content Include="..\..\data\custom-test\grid4.geojson">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <Link>Worlds\grid4.geojson</Link>
-        </Content>
-        <Content Include="..\..\data\full-world\states\world_admin1.geojson">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <Link>Worlds\world_admin1.geojson</Link>
-        </Content>
+        <ProjectReference Include="..\SimEngine.Game\SimEngine.Game.csproj" />
     </ItemGroup>
 
 </Project>

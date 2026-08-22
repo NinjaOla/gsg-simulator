@@ -231,20 +231,47 @@ void StartGameScene()
     sphereEntity.Transform.Position = Vector3.Zero;
     activeScene.Entities.Add(sphereEntity);
 
+    // The toolkit maps Primitive3DEntityOptions.Size.X to SphereProceduralModel.Radius,
+    // so the sphere's actual radius equals SphereDiameter (despite the name).
+    var globeRadius = SphereDiameter;
+    var geoJsonPath = selection.ResolvePath();
+
+    var borderEntity = GeoJsonBorderLines.CreateEntity(
+        game,
+        geoJsonPath,
+        globeRadius,
+        borderColor: new Color(235, 245, 255),
+        maxSegments: 2_000_000);
+    borderEntity.Transform.Position = Vector3.Zero;
+    activeScene.Entities.Add(borderEntity);
+
+    var provinceIndex = GeoJsonProvinceIndex.Load(geoJsonPath);
+
     if (activeCameraEntity is not null)
     {
         activeCameraEntity.Add(new GlobeOrbitCameraController
         {
             Target = Vector3.Zero,
-            Radius = 9.5f,
-            MinRadius = 3f,
-            MaxRadius = 25f,
+            Radius = 12f,
+            MinRadius = globeRadius + 1f,
+            MaxRadius = 30f,
             OrbitSensitivity = 0.012f,
             ZoomSensitivity = 0.75f,
         });
+
+        if (activeCameraEntity.Get<CameraComponent>() is { } cameraComponent)
+        {
+            activeCameraEntity.Add(new GlobePickScript
+            {
+                Camera = cameraComponent,
+                ProvinceIndex = provinceIndex,
+                GlobeRadius = globeRadius,
+            });
+        }
     }
 
-    global::System.Console.WriteLine("Game scene started.");
+    global::System.Console.WriteLine(
+        $"Game scene started. Borders drawn from {geoJsonPath} provinces={provinceIndex.FeatureCount}");
 }
 
 static int TryCountFeatures(string geoJsonPath)
@@ -285,7 +312,7 @@ internal sealed class GeoJsonSelection
     public static GeoJsonSelection Parse(string[] args)
     {
         string? customPath = null;
-        var useFullWorld = false;
+        var useFullWorld = true;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -294,6 +321,13 @@ internal sealed class GeoJsonSelection
             if (arg.Equals("--full-world", StringComparison.OrdinalIgnoreCase))
             {
                 useFullWorld = true;
+                continue;
+            }
+
+            if (arg.Equals("--grid", StringComparison.OrdinalIgnoreCase)
+                || arg.Equals("--small", StringComparison.OrdinalIgnoreCase))
+            {
+                useFullWorld = false;
                 continue;
             }
 

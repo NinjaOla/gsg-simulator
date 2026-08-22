@@ -10,4 +10,48 @@
   <ItemGroup>
     <ProjectReference Include="..\SimEngine\SimEngine.csproj" />
   </ItemGroup>
+
+  <!--
+    World data is owned by the game layer. These files are copied to the
+    output "Worlds\" folder and flow transitively to every referencing
+    project (UI, server, tools, tests) so they are not duplicated per project.
+  -->
+  <ItemGroup>
+    <Content Include="..\..\data\custom-test\grid4.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\grid4.geojson</Link>
+    </Content>
+    <Content Include="..\..\data\germany-test\germany_admin1.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\germany_admin1.geojson</Link>
+    </Content>
+    <Content Include="..\..\data\europe-west\europe_west_admin1.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\europe_west_admin1.geojson</Link>
+    </Content>
+    <Content Include="..\..\data\full-world\states\world_admin1.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\world_admin1.geojson</Link>
+    </Content>
+    <Content Include="..\..\data\custom-test\grid4.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\grid4.countries.json</Link>
+    </Content>
+    <Content Include="..\..\data\germany-test\germany_admin1.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\germany_admin1.countries.json</Link>
+    </Content>
+    <Content Include="..\..\data\europe-west\europe_west_admin1.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\europe_west_admin1.countries.json</Link>
+    </Content>
+    <Content Include="..\..\data\full-world\countries\world_admin1.countries.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\world_admin1.countries.json</Link>
+    </Content>
+    <Content Include="..\..\data\full-world\marineregions\world_eez.geojson">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Worlds\marineregions\world_eez.geojson</Link>
+    </Content>
+  </ItemGroup>
 </Project>
