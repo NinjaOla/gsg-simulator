@@ -9,6 +9,12 @@ public sealed record SessionInfo
     /// <summary>Display name of the loaded world.</summary>
     public string WorldName { get; init; } = string.Empty;
 
+    /// <summary>Stable world id; clients load this world's static data locally.</summary>
+    public string WorldId { get; init; } = string.Empty;
+
+    /// <summary>The session's authoritative content hash, checked on join.</summary>
+    public string ContentHash { get; init; } = string.Empty;
+
     /// <summary>Current tick number (0 for a fresh game).</summary>
     public long TickNumber { get; init; }
 

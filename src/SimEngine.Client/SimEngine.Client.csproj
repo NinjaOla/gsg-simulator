@@ -5,15 +5,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Akka" />
-    <PackageReference Include="Akka.Hosting" />
-    <PackageReference Include="Akka.Remote" />
-    <PackageReference Include="Akka.Cluster" />
-    <PackageReference Include="Akka.Cluster.Hosting" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\SimEngine.Contracts\SimEngine.Contracts.csproj" />
+    <ProjectReference Include="..\SimEngine.Networking\SimEngine.Networking.csproj" />
   </ItemGroup>
 
 </Project>

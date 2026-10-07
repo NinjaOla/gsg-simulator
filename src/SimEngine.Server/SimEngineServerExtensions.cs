@@ -2,9 +2,10 @@ using Akka.Actor;
 using Akka.Cluster.Hosting;
 using Akka.Cluster.Sharding;
 using Akka.Hosting;
-using Microsoft.Extensions.DependencyInjection;
 using SimEngine.Contracts;
+using SimEngine.Networking;
 using SimEngine.Server.Actors;
+using SimEngine.Server.Gateway;
 
 namespace SimEngine.Server;
 
@@ -16,16 +17,7 @@ namespace SimEngine.Server;
 /// </summary>
 public static class SimEngineServerExtensions
 {
-    /// <summary>
-    /// Registers the <see cref="ILocalEngineProvider"/> used by in-process
-    /// clients to read engine state directly. Call before configuring Akka.
-    /// </summary>
-    public static IServiceCollection AddSimEngineServer(this IServiceCollection services)
-    {
-        ArgumentNullException.ThrowIfNull(services);
-        services.AddSingleton<ILocalEngineProvider, LocalEngineProvider>();
-        return services;
-    }
+    private static int _gatewayCount;
 
     /// <summary>
     /// Registers the SimEngine server actors on the Akka configuration builder.
@@ -33,20 +25,21 @@ public static class SimEngineServerExtensions
     public static AkkaConfigurationBuilder WithSimEngineActors(
         this AkkaConfigurationBuilder builder,
         AkkaExecutionMode executionMode = AkkaExecutionMode.LocalTest,
-        string? clusterRole = null)
+        string? clusterRole = null,
+        SessionRuntimeOptions? sessionOptions = null)
     {
         ArgumentNullException.ThrowIfNull(builder);
+        var options = sessionOptions ?? SessionRuntimeOptions.Default;
+        Props SessionProps(string entityId) => GameSessionActor.Props(entityId, options);
 
         if (executionMode == AkkaExecutionMode.LocalTest)
         {
-            builder.WithActors((system, registry, resolver) =>
+            builder.WithActors((system, registry, _) =>
             {
-                var engineProvider = resolver.GetService<ILocalEngineProvider>();
-
                 var sessions = system.ActorOf(
                     GenericChildPerEntityParent.CreateProps(
                         new SessionMessageExtractor(),
-                        entityId => GameSessionActor.Props(entityId, engineProvider)),
+                        SessionProps),
                     ActorNames.Sessions);
                 registry.Register<SessionActorsMarker>(sessions);
 
@@ -73,11 +66,7 @@ public static class SimEngineServerExtensions
             builder
                 .WithShardRegion<SessionActorsMarker>(
                     ActorNames.Sessions,
-                    (_, _, resolver) =>
-                    {
-                        var engineProvider = resolver.GetService<ILocalEngineProvider>();
-                        return entityId => GameSessionActor.Props(entityId, engineProvider);
-                    },
+                    (_, _, _) => SessionProps,
                     new SessionMessageExtractor(),
                     shardOptions)
                 .WithActors((system, registry, _) =>
@@ -95,6 +84,31 @@ public static class SimEngineServerExtensions
                     registry.Register<LobbyMarker>(lobby);
                 });
         }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Accepts client connections from the listener through a <see cref="GatewayActor"/>.
+    /// Register after <see cref="WithSimEngineActors"/>. The gateway owns and disposes the listener.
+    /// </summary>
+    public static AkkaConfigurationBuilder WithSimEngineGateway(
+        this AkkaConfigurationBuilder builder,
+        ITransportListener listener,
+        GatewayOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(listener);
+        var gatewayOptions = options ?? new GatewayOptions();
+        // Unique per registration so a server can listen on several endpoints of one scheme.
+        var name = $"gateway-{listener.LocalEndpoint.Scheme}-{Interlocked.Increment(ref _gatewayCount)}";
+
+        builder.WithActors((system, registry, _) =>
+        {
+            var sessions = registry.Get<SessionActorsMarker>();
+            var lobby = registry.Get<LobbyMarker>();
+            system.ActorOf(GatewayActor.Props(listener, sessions, lobby, gatewayOptions), name);
+        });
 
         return builder;
     }

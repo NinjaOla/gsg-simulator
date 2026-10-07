@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO.Compression;
 using Akka.Actor;
 using Akka.Hosting;
-using Akka.Remote.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -12,15 +11,18 @@ using SimEngine.Contracts;
 using SimEngine.Game;
 using SimEngine.Game.Seeding;
 using SimEngine.MpSpike;
+using SimEngine.Networking;
+using SimEngine.Networking.Tcp;
 using SimEngine.Server;
-using SimEngine.Server.Worlds;
+using SimEngine.Server.Direct;
+using SimEngine.Game.Worlds;
 using SimEngine.State.Loading;
 using SimEngine.State.Loading.GeoJson;
 
-// Akka go/no-go spike. Stands up a standalone server actor system with
-// remoting, connects an external Akka client over the loopback TCP transport
-// sharing one session, and measures the cost the actor runtime adds over a
-// direct engine, plus the per-tick broadcast path and save-snapshot size.
+// Akka go/no-go spike. Stands up a standalone server actor system with a TCP
+// gateway, connects an external wire client over loopback sharing one session,
+// and measures the cost the actor runtime adds over a direct engine, plus the
+// per-tick broadcast path and save-snapshot size.
 //
 // Budgets (pass/fail printed at the end):
 //   - in-process actor overhead vs direct engine:  < 1 ms
@@ -38,35 +40,35 @@ const int ExternalIterations = 300;
 const int StreamIterations = 100;
 
 const string ServerSystemName = "SimEngineServer";
-const string ServerHost = "127.0.0.1";
-const int ServerPort = 8110;
-const string ClientSystemName = "SimEngineSpikeClient";
+const string SpikePlayer = "spike";
 
 Console.WriteLine("=== SimEngine MP runtime spike ===");
 Console.WriteLine($"World: {World}   seed: {Seed}   start: {startDate:yyyy-MM-dd}");
 Console.WriteLine();
 
 // ---------------------------------------------------------------------------
-// Standalone server actor system with remoting plus the engine provider.
+// Standalone server actor system with a TCP gateway on an ephemeral loopback port.
 // ---------------------------------------------------------------------------
+var transports = new TransportRegistry(new TcpTransport());
+var listener = await transports.ListenAsync(TcpTransport.CreateEndpoint("127.0.0.1", 0));
+var serverEndpoint = listener.LocalEndpoint;
 var server = new HostBuilder()
     .ConfigureServices(s =>
     {
-        s.AddSimEngineServer();
         s.AddAkka(ServerSystemName, builder =>
         {
             builder
-                .WithRemoting(ServerHost, ServerPort)
-                .WithSimEngineActors(AkkaExecutionMode.LocalTest);
+                .WithSimEngineActors(AkkaExecutionMode.LocalTest)
+                .WithSimEngineGateway(listener);
         });
     })
     .ConfigureLogging(l => l.SetMinimumLevel(LogLevel.Warning))
     .Build();
 
 await server.StartAsync();
-Console.WriteLine($"Server started (akka.tcp://{ServerSystemName}@{ServerHost}:{ServerPort}).");
+Console.WriteLine($"Server started ({serverEndpoint}).");
 
-IHost? client = null;
+GameClient? client = null;
 try
 {
     var serverRegistry = server.Services.GetRequiredService<ActorRegistry>();
@@ -86,55 +88,53 @@ try
     // 2) Co-hosted actor - Ask originating inside the server process (no
     //    network), isolating the runtime/dispatch overhead.
     // -----------------------------------------------------------------------
-    var coHostedStats = new LatencyStats("Co-hosted actor AdvanceAsync(1) (in-proc)");
+    var coHostedStats = new LatencyStats("Co-hosted actor DebugStepAsync(1) (in-proc)");
     {
-        var local = GameClient.FromLocalRegistry(serverSystem, serverRegistry);
+        var local = ActorGameClient.FromLocalRegistry(serverSystem, serverRegistry);
         var session = local.GetSession("spike-cohosted");
-        await session.InitializeAsync(World, startDate, Seed);
-        for (var i = 0; i < Warmup; i++) await session.AdvanceAsync(1);
+        await PrepareDebugSessionAsync(session);
+        for (var i = 0; i < Warmup; i++) await session.DebugStepAsync(SpikePlayer, 1);
         for (var i = 0; i < CoHostedIterations; i++)
-            await coHostedStats.MeasureAsync(() => session.AdvanceAsync(1));
+            await coHostedStats.MeasureAsync(() => session.DebugStepAsync(SpikePlayer, 1));
     }
 
     // -----------------------------------------------------------------------
-    // 3) External client over the loopback transport (real TCP sockets).
+    // 3) External wire client through the TCP gateway (real loopback sockets).
     // -----------------------------------------------------------------------
-    client = ConnectClient();
-    await client.StartAsync();
-    var clientSystem = client.Services.GetRequiredService<ActorSystem>();
-    var remoteClient = await GameClient.ConnectRemoteAsync(
-        clientSystem, $"akka.tcp://{ServerSystemName}@{ServerHost}:{ServerPort}/user");
-    Console.WriteLine("External client connected over loopback transport.");
+    client = await GameClient.ConnectAsync(transports, serverEndpoint, SpikePlayer);
+    Console.WriteLine("External client connected over TCP.");
     Console.WriteLine();
 
-    const string sharedSession = "spike-external";
-    var externalSession = remoteClient.GetSession(sharedSession);
-    await externalSession.InitializeAsync(World, startDate, Seed);
+    var listing = await client.CreateGameAsync(new CreateGameRequest { Name = "spike-external", WorldId = World, StartDate = startDate, Seed = Seed });
+    var externalSession = await client.JoinGameAsync(listing.SessionId, StaticWorld.Load(World).ContentHash);
+    await externalSession.UpdateSettingsAsync(new GameSettings { AllowDebugCommands = true });
+    await externalSession.StartGameAsync(paused: true);
 
-    var externalStats = new LatencyStats("External client AdvanceAsync(1) round-trip");
-    for (var i = 0; i < Warmup; i++) await externalSession.AdvanceAsync(1);
+    var externalStats = new LatencyStats("External client DebugStepAsync(1) round-trip");
+    for (var i = 0; i < Warmup; i++) await externalSession.DebugStepAsync(1);
     for (var i = 0; i < ExternalIterations; i++)
-        await externalStats.MeasureAsync(() => externalSession.AdvanceAsync(1));
+        await externalStats.MeasureAsync(() => externalSession.DebugStepAsync(1));
 
     // -----------------------------------------------------------------------
-    // 4) Broadcast delivery: an observer actor subscribes and times how long
-    //    each per-tick SessionStreamUpdate takes to arrive after the advance.
+    // 4) Broadcast delivery: time from issuing an advance until the client's
+    //    synced cache reflects the resulting tick (pushed over the wire).
     // -----------------------------------------------------------------------
     var streamStats = new LatencyStats("Broadcast delivery (advance -> observe)");
-    var allDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    var observer = clientSystem.ActorOf(Props.Create(() =>
-        new SpikeObserver(streamStats, StreamIterations, allDelivered)));
-
-    await externalSession.SubscribeAsync(observer);
-
-    for (var i = 0; i < StreamIterations; i++)
+    var delivered = 0;
+    await using (var subscription = await externalSession.SubscribeAsync())
     {
-        observer.Tell(new SpikeObserver.MarkIssued(Stopwatch.GetTimestamp()));
-        await externalSession.AdvanceAsync(1);
+        for (var i = 0; i < StreamIterations; i++)
+        {
+            var issued = Stopwatch.GetTimestamp();
+            var result = await externalSession.DebugStepAsync(1);
+            if (subscription.Cache.WaitForTick(result.TickNumber, TimeSpan.FromSeconds(30)))
+            {
+                streamStats.Record(Stopwatch.GetElapsedTime(issued).TotalMilliseconds);
+                delivered++;
+            }
+        }
     }
-
-    var streamCompleted = await Task.WhenAny(allDelivered.Task, Task.Delay(TimeSpan.FromSeconds(30)));
-    await externalSession.UnsubscribeAsync(observer);
+    var allDelivered = delivered == StreamIterations;
 
     // -----------------------------------------------------------------------
     // 5) Save-snapshot size for the real-world map.
@@ -150,11 +150,11 @@ try
     Console.WriteLine(externalStats.Report());
     Console.WriteLine();
 
-    Console.WriteLine("--- Events-out path (Akka broadcast) ---");
+    Console.WriteLine("--- Events-out path (wire broadcast) ---");
     Console.WriteLine(streamStats.Report());
-    Console.WriteLine(streamCompleted == allDelivered.Task
-        ? $"All {StreamIterations} updates delivered to observer."
-        : "WARNING: not all updates delivered before timeout.");
+    Console.WriteLine(allDelivered
+        ? $"All {StreamIterations} updates delivered to the client."
+        : $"WARNING: only {delivered}/{StreamIterations} updates delivered before timeout.");
     Console.WriteLine();
 
     Console.WriteLine("--- Save snapshot size (germany_admin1) ---");
@@ -178,8 +178,7 @@ finally
 {
     if (client is not null)
     {
-        await client.StopAsync();
-        client.Dispose();
+        await client.DisposeAsync();
     }
 
     await server.StopAsync();
@@ -191,13 +190,14 @@ return;
 // ---------------------------------------------------------------------------
 // Helpers.
 // ---------------------------------------------------------------------------
-static IHost ConnectClient()
+
+// Initializes, joins as host, enables debug commands, and starts paused so DebugStep is allowed.
+async Task PrepareDebugSessionAsync(ActorSessionClient session)
 {
-    return new HostBuilder()
-        .ConfigureServices(s => s.AddAkka(ClientSystemName, builder =>
-            builder.WithRemoting("127.0.0.1", 0)))
-        .ConfigureLogging(l => l.SetMinimumLevel(LogLevel.Warning))
-        .Build();
+    var info = await session.InitializeAsync(World, startDate, Seed);
+    await session.JoinAsync(SpikePlayer, info.ContentHash);
+    await session.UpdateSettingsAsync(SpikePlayer, new GameSettings { AllowDebugCommands = true });
+    await session.StartGameAsync(SpikePlayer, paused: true);
 }
 
 SimulationEngine BuildEngine()

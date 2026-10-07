@@ -1,7 +1,7 @@
 using Akka.Actor;
 using SimEngine.Contracts;
 using SimEngine.Game;
-using SimEngine.Server.Worlds;
+using SimEngine.Game.Worlds;
 using Xunit;
 
 namespace SimEngine.Server.Tests;
@@ -108,7 +108,7 @@ public sealed class PlayerActorTests : IAsyncLifetime
     public async Task SubmitCommand_NotJoined_Throws()
     {
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => SubmitAsync("p-submit-unjoined", new StepPlayerCommand(1)));
+            () => SubmitAsync("p-submit-unjoined", new PausePlayerCommand()));
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public sealed class PlayerActorTests : IAsyncLifetime
     {
         await JoinAsync("p-buffer", "s-buffer", ContentHash);
 
-        await SubmitAsync("p-buffer", new StepPlayerCommand(1));
+        await SubmitAsync("p-buffer", new SetSpeedPlayerCommand(2));
         await SubmitAsync("p-buffer", new PausePlayerCommand());
 
         Assert.Equal(2, await BufferedCountAsync("p-buffer"));
@@ -133,8 +133,12 @@ public sealed class PlayerActorTests : IAsyncLifetime
     [Fact]
     public async Task FlushCommands_ClearsBuffer()
     {
-        await JoinAsync("p-flush-clear", "s-flush-clear", ContentHash);
-        await SubmitAsync("p-flush-clear", new StepPlayerCommand(1));
+        const string sessionId = "s-flush-clear";
+        var session = _harness.Client.GetSession(sessionId);
+        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
+        await JoinAsync("p-flush-clear", sessionId, ContentHash);
+        await session.StartGameAsync("p-flush-clear", paused: true, Ct);
+        await SubmitAsync("p-flush-clear", new SetSpeedPlayerCommand(2));
 
         var flushed = await FlushAsync("p-flush-clear");
 
@@ -143,29 +147,41 @@ public sealed class PlayerActorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task FlushCommands_ForwardsBufferedCommandsToSession()
+    public async Task FlushCommands_ForwardsBufferedCommandsToSession_WithPlayerIdentity()
     {
         const string sessionId = "s-flush-forward";
         var session = _harness.Client.GetSession(sessionId);
         await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
 
         await JoinAsync("p-flush-forward", sessionId, ContentHash);
-        await SubmitAsync("p-flush-forward", new StepPlayerCommand(5));
+        await session.StartGameAsync("p-flush-forward", paused: true, Ct);
+        await SubmitAsync("p-flush-forward", new SetSpeedPlayerCommand(5));
         await FlushAsync("p-flush-forward");
 
-        // The buffered StepPlayerCommand(5) was enqueued on the session, so a
-        // single step drains it and advances five ticks.
-        var result = await session.AdvanceAsync(1, Ct);
+        // The player is host, so the host-only speed change was accepted.
+        Assert.Equal(5, (await session.GetStatusAsync(Ct)).Speed);
+    }
 
-        Assert.Equal(5, result.TickNumber);
-        Assert.Equal(5, result.TicksExecuted);
+    [Fact]
+    public async Task FlushCommands_RejectedCommand_FailsAndClearsBuffer()
+    {
+        const string sessionId = "s-flush-reject";
+        var session = _harness.Client.GetSession(sessionId);
+        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
+
+        await JoinAsync("p-flush-reject", sessionId, ContentHash);
+        // Still in the lobby: pausing is rejected.
+        await SubmitAsync("p-flush-reject", new PausePlayerCommand());
+
+        await Assert.ThrowsAsync<CommandRejectedException>(() => FlushAsync("p-flush-reject"));
+        Assert.Equal(0, await BufferedCountAsync("p-flush-reject"));
     }
 
     [Fact]
     public async Task LeaveSession_DiscardsBufferedCommands()
     {
         await JoinAsync("p-leave-buffer", "s-leave-buffer", ContentHash);
-        await SubmitAsync("p-leave-buffer", new StepPlayerCommand(1));
+        await SubmitAsync("p-leave-buffer", new PausePlayerCommand());
 
         await LeaveAsync("p-leave-buffer");
 

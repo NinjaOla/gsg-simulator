@@ -5,7 +5,7 @@ namespace SimEngine.Game;
 /// <summary>
 /// Reads the game-defined save manifest out of a save file and reconstructs
 /// the <see cref="GameDefinition"/> required to load it. Any host (console,
-/// server grain, tooling) goes through this so save compatibility rules live
+/// server session actor, tooling) goes through this so save compatibility rules live
 /// in one place.
 /// </summary>
 public static class GameSaves
@@ -13,7 +13,10 @@ public static class GameSaves
     private const string SaveMetadataPropertyName = "saveMetadata";
     private const string DefaultScenarioId = "default";
     private const string DefaultContentVersion = "dev";
-    private const string DefaultContentHash = "dev";
+    /// <summary>Content hash reported for saves written before content hashes were recorded.</summary>
+    public const string LegacyContentHash = "dev";
+
+    private const string DefaultContentHash = LegacyContentHash;
 
     public static GameDefinition ReadDefinition(string path)
     {

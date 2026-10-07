@@ -22,31 +22,65 @@ public static class SessionProtocol
     /// </summary>
     public sealed record InitializeFromSave(string SessionId, string SavePath) : IWithSessionId;
 
-    /// <summary>Queues a single command. Reply: <see cref="Ack"/>.</summary>
-    public sealed record EnqueueCommand(string SessionId, PlayerCommand Command) : IWithSessionId;
-
-    /// <summary>Queues a batch of commands in order. Reply: <see cref="Ack"/>.</summary>
-    public sealed record EnqueueCommands(string SessionId, PlayerCommand[] Commands) : IWithSessionId;
+    /// <summary>
+    /// Applies a command issued by <paramref name="PlayerId"/>. Reply: <see cref="Ack"/>,
+    /// or <see cref="Status.Failure"/> wrapping <see cref="CommandRejectedException"/>.
+    /// </summary>
+    public sealed record EnqueueCommand(string SessionId, string PlayerId, PlayerCommand Command) : IWithSessionId;
 
     /// <summary>
-    /// Registers a player as a member. Reply: <see cref="Ack"/>, or
-    /// <see cref="Status.Failure"/> wrapping <see cref="ContentMismatchException"/>.
+    /// Applies a batch of commands in order, stopping at the first rejection.
+    /// Reply: <see cref="Ack"/>, or <see cref="Status.Failure"/>.
     /// </summary>
-    public sealed record Join(string SessionId, string PlayerId, string ContentHash) : IWithSessionId;
+    public sealed record EnqueueCommands(string SessionId, string PlayerId, PlayerCommand[] Commands) : IWithSessionId;
+
+    /// <summary>
+    /// Registers a player as a member (lobby only). The first player to join
+    /// becomes host. Reply: <see cref="Ack"/>, or <see cref="Status.Failure"/>
+    /// wrapping <see cref="ContentMismatchException"/> or <see cref="CommandRejectedException"/>.
+    /// </summary>
+    public sealed record Join(string SessionId, string PlayerId, string ContentHash, string? PlayerName = null) : IWithSessionId;
+
+    /// <summary>
+    /// Host-only: moves the session from <see cref="SessionStage.Lobby"/> to
+    /// <see cref="SessionStage.Running"/> (or <see cref="SessionStage.Paused"/>
+    /// when <paramref name="Paused"/>). Reply: <see cref="Ack"/>.
+    /// </summary>
+    public sealed record StartGame(string SessionId, string PlayerId, bool Paused = false) : IWithSessionId;
+
+    /// <summary>Host-only, lobby-only: replaces the game settings. Reply: <see cref="Ack"/>.</summary>
+    public sealed record UpdateSettings(string SessionId, string PlayerId, GameSettings Settings) : IWithSessionId;
+
+    /// <summary>
+    /// Debug: runs <paramref name="Ticks"/> ticks immediately. Only while paused
+    /// and when <see cref="GameSettings.AllowDebugCommands"/>. Reply: <see cref="TickResult"/>.
+    /// </summary>
+    public sealed record DebugStep(string SessionId, string PlayerId, int Ticks) : IWithSessionId;
+
+    /// <summary>Gets the lightweight session status. Reply: <see cref="SessionStatus"/>.</summary>
+    public sealed record GetStatus(string SessionId) : IWithSessionId;
+
+    /// <summary>
+    /// Sent by a subscriber (as <c>Sender</c>) after applying the update or
+    /// snapshot with <paramref name="Sequence"/>. No reply.
+    /// </summary>
+    public sealed record AckUpdate(string SessionId, long Sequence) : IWithSessionId;
 
     /// <summary>Removes a player. Reply: <see cref="Ack"/>.</summary>
     public sealed record Leave(string SessionId, string PlayerId) : IWithSessionId;
 
-    /// <summary>Gets the ordered session members. Reply: <c>string[]</c>.</summary>
+    /// <summary>
+    /// The player's connection dropped. In the lobby this is a <see cref="Leave"/>; after
+    /// the start the player stays a member, marked disconnected. The host disconnecting
+    /// ends the session. Reply: <see cref="Ack"/>.
+    /// </summary>
+    public sealed record Disconnect(string SessionId, string PlayerId) : IWithSessionId;
+
+    /// <summary>Gets the ordered session member ids. Reply: <c>string[]</c>.</summary>
     public sealed record GetPlayers(string SessionId) : IWithSessionId;
 
     /// <summary>Gets the full synced baseline. Reply: <see cref="SessionSnapshot"/>.</summary>
     public sealed record GetSnapshot(string SessionId) : IWithSessionId;
-
-    /// <summary>
-    /// Applies queued commands then advances the engine. Reply: <see cref="TickResult"/>.
-    /// </summary>
-    public sealed record Advance(string SessionId, int Ticks) : IWithSessionId;
 
     /// <summary>Saves the engine snapshot. Reply: resolved absolute path (<c>string</c>).</summary>
     public sealed record Save(string SessionId, string SavePath) : IWithSessionId;
@@ -62,10 +96,18 @@ public static class SessionProtocol
 
     /// <summary>
     /// Subscribes <paramref name="Subscriber"/> to per-tick
-    /// <see cref="SessionStreamUpdate"/> broadcasts. Reply: <see cref="Ack"/>.
+    /// <see cref="SessionStreamUpdate"/> broadcasts. The subscriber must reply
+    /// with <see cref="AckUpdate"/>; a lagging subscriber receives merged
+    /// catch-up updates or a fresh <see cref="SessionSnapshot"/>. Reply: <see cref="Ack"/>.
     /// </summary>
     public sealed record Subscribe(string SessionId, IActorRef Subscriber) : IWithSessionId;
 
     /// <summary>Unsubscribes a previously subscribed actor. Reply: <see cref="Ack"/>.</summary>
     public sealed record Unsubscribe(string SessionId, IActorRef Subscriber) : IWithSessionId;
+
+    /// <summary>
+    /// Pushed to subscribers when the session ends (host left or shut down).
+    /// No further updates follow.
+    /// </summary>
+    public sealed record SessionEnded(string SessionId, string Reason);
 }

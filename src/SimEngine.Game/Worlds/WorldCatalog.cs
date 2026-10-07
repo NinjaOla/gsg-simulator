@@ -1,15 +1,16 @@
-namespace SimEngine.Server.Worlds;
+namespace SimEngine.Game.Worlds;
 
 /// <summary>
-/// A world the server can load. <see cref="WorldId"/> is the stable identifier
-/// clients pass to <c>IGameSessionGrain.InitializeAsync</c>; it is also used as
+/// A playable world. <see cref="WorldId"/> is the stable identifier
+/// clients pass in <c>SessionProtocol.Initialize</c>; it is also used as
 /// the scenario id in save metadata, so it must never change for a shipped world.
 /// </summary>
 public sealed record WorldAssetInfo(string WorldId, string DisplayName, string ProvinceFileName, string CountryFileName);
 
 /// <summary>
-/// Server-owned catalog of loadable worlds. Content resolution lives on the
-/// server so clients never deal in file paths — only world ids.
+/// Catalog of loadable worlds, shared by server and clients: the server loads
+/// a world to simulate it, and each client loads the same files locally as
+/// static data (only the content hash crosses the wire).
 /// </summary>
 public static class WorldCatalog
 {

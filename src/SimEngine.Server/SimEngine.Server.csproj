@@ -14,10 +14,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SimEngine.Contracts\SimEngine.Contracts.csproj" />
+    <ProjectReference Include="..\SimEngine.Networking\SimEngine.Networking.csproj" />
     <ProjectReference Include="..\SimEngine\SimEngine.csproj" />
     <ProjectReference Include="..\SimEngine.Game\SimEngine.Game.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="Grains\" />
   </ItemGroup>
 </Project>

@@ -39,9 +39,29 @@ public sealed class LobbyActorTests : IAsyncLifetime
     public async Task CreateGameAsync_CreatesPlayableSession()
     {
         var listing = await _harness.Client.CreateGameAsync(Request("Playable"), TestContext.Current.CancellationToken);
-        var result = await _harness.Client.GetSession(listing.SessionId).AdvanceAsync(1, TestContext.Current.CancellationToken);
+        var session = _harness.Client.GetSession(listing.SessionId);
+        var snapshot = await session.GetSnapshotAsync(TestContext.Current.CancellationToken);
+        await session.PrepareForDebugAsync(snapshot.ContentHash, TestContext.Current.CancellationToken);
+        var result = await session.StepAsync(1, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result.TickNumber);
+    }
+
+    [Fact]
+    public async Task ListGamesAsync_ReportsStageAndPlayerCount()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var listing = await _harness.Client.CreateGameAsync(Request("Live"), ct);
+        Assert.Equal(SessionStage.Lobby, (await _harness.Client.ListGamesAsync(ct)).Single().Stage);
+
+        var session = _harness.Client.GetSession(listing.SessionId);
+        var snapshot = await session.GetSnapshotAsync(ct);
+        await session.PrepareForDebugAsync(snapshot.ContentHash, ct);
+
+        var game = (await _harness.Client.ListGamesAsync(ct)).Single();
+        Assert.Equal(SessionStage.Paused, game.Stage);
+        Assert.Equal(1, game.PlayerCount);
+        Assert.Equal(SessionStage.Paused, (await _harness.Client.GetGameAsync(listing.SessionId, ct))!.Stage);
     }
 
     [Fact]

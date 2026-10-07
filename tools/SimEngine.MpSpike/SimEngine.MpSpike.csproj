@@ -12,7 +12,6 @@
   <ItemGroup>
     <PackageReference Include="Akka" />
     <PackageReference Include="Akka.Hosting" />
-    <PackageReference Include="Akka.Remote" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
 

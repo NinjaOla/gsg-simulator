@@ -11,7 +11,9 @@ internal static class App
 
             GameSession? session = choice switch
             {
-                MainMenuChoice.NewGame => NewGameFlow.Run(services),
+                MainMenuChoice.SinglePlayer => SinglePlayerFlow.Run(services),
+                MainMenuChoice.HostMultiplayer => HostGameFlow.Run(services),
+                MainMenuChoice.JoinMultiplayer => JoinGameFlow.Run(services),
                 MainMenuChoice.LoadGame => LoadGameFlow.Run(services),
                 MainMenuChoice.Quit => null,
                 _ => null,

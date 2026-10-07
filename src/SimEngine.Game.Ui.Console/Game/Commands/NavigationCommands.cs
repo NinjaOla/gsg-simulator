@@ -1,3 +1,5 @@
+using SimEngine.Client;
+using SimEngine.Contracts;
 using Spectre.Console;
 
 namespace SimEngine.Game.Ui.Console.Game.Commands;
@@ -31,8 +33,7 @@ public sealed class DateCommand : ICommand
 
     public void Execute(GameSession session, string[] args)
     {
-        var t = session.Engine.Time.GetUtcNow();
-        AnsiConsole.MarkupLine($"[bold gold1]{t:yyyy-MM-dd}[/]  [dim]tick {session.Engine.TickNumber}[/]");
+        AnsiConsole.MarkupLine($"[bold gold1]{session.State.CurrentDate:yyyy-MM-dd}[/]  [dim]tick {session.State.TickNumber}[/]");
     }
 }
 
@@ -65,9 +66,9 @@ public sealed class SaveCommand : ICommand
         {
             var resolvedPath = GameSessionFactory.Save(session, args[0]);
             AnsiConsole.MarkupLine(
-                $"[green]Saved.[/] {Markup.Escape(resolvedPath)}  [dim]{session.Engine.Time.Current:yyyy-MM-dd} · tick {session.Engine.TickNumber} · {session.ProvinceCount} provinces[/]");
+                $"[green]Saved.[/] {Markup.Escape(resolvedPath)}  [dim]{session.State.CurrentDate:yyyy-MM-dd} · tick {session.State.TickNumber} · {session.ProvinceCount} provinces[/]");
         }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or CommandRejectedException or RemoteRequestException)
         {
             AnsiConsole.MarkupLine($"[red]Could not save game:[/] {Markup.Escape(ex.Message)}");
         }
@@ -78,7 +79,7 @@ public sealed class LoadCommand : ICommand
 {
     public string Name => "load";
     public string[] Aliases => [];
-    public string Description => "Load a saved game.";
+    public string Description => "End this game and load a save into a new lobby (host only).";
     public string Usage => "load <file>";
 
     public void Execute(GameSession session, string[] args)
@@ -89,11 +90,18 @@ public sealed class LoadCommand : ICommand
             return;
         }
 
+        if (!session.IsHost)
+        {
+            AnsiConsole.MarkupLine("[red]Only the host can load a game.[/]");
+            return;
+        }
+
         try
         {
-            session.ReplaceWith(GameSessionFactory.Load(args[0], session.Services));
+            // Loading first keeps this game running if the save is rejected.
+            session.ContinueWithLoaded(GameSessionFactory.LoadGame(session.Client, args[0]));
         }
-        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or TimeoutException or CommandRejectedException or RemoteRequestException)
         {
             AnsiConsole.MarkupLine($"[red]Could not load save:[/] {Markup.Escape(ex.Message)}");
         }

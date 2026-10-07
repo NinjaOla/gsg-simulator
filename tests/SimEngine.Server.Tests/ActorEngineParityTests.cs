@@ -2,7 +2,7 @@ using SimEngine;
 using SimEngine.Contracts;
 using SimEngine.Game;
 using SimEngine.Game.Seeding;
-using SimEngine.Server.Worlds;
+using SimEngine.Game.Worlds;
 using SimEngine.State.Loading;
 using SimEngine.State.Loading.GeoJson;
 using Xunit;
@@ -41,11 +41,11 @@ public sealed class ActorEngineParityTests : IAsyncLifetime
         try
         {
             var session = _harness.Client.GetSession("parity");
-            await session.InitializeAsync(WorldId, StartDate, Seed, TestContext.Current.CancellationToken);
-            await session.AdvanceAsync(Ticks, TestContext.Current.CancellationToken);
+            await session.InitializeForDebugAsync(WorldId, StartDate, Seed, TestContext.Current.CancellationToken);
+            await session.StepAsync(Ticks, TestContext.Current.CancellationToken);
             await session.SaveAsync(actorPath, TestContext.Current.CancellationToken);
 
-            var engine = BuildEngineLikeTheActorDoes();
+            var engine = BuildEngineLikeTheActorDoes(new GameSettings { AllowDebugCommands = true });
             engine.StepMany(Ticks, TestContext.Current.CancellationToken);
             engine.Save(directPath);
 
@@ -60,7 +60,49 @@ public sealed class ActorEngineParityTests : IAsyncLifetime
         }
     }
 
-    private static SimulationEngine BuildEngineLikeTheActorDoes()
+    [Fact]
+    public async Task TickingViaScheduler_MatchesDirectEngine_ByteForByte()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var actorPath = TempSavePath();
+        var directPath = TempSavePath();
+        try
+        {
+            const string host = "host";
+            var settings = new GameSettings { InitialSpeed = GameSettings.MaxSpeed };
+            var session = _harness.Client.GetSession("parity-scheduler");
+            var info = await session.InitializeAsync(WorldId, StartDate, Seed, ct);
+            await session.JoinAsync(host, info.ContentHash, ct);
+            await session.UpdateSettingsAsync(host, settings, ct);
+            await session.StartGameAsync(host, ct: ct);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+            while ((await session.GetStatusAsync(ct)).TickNumber < Ticks)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "Timed out waiting for the scheduler to tick.");
+                await Task.Delay(10, ct);
+            }
+
+            await session.SendCommandAsync(host, new PausePlayerCommand(), ct);
+            var ticked = (await session.GetStatusAsync(ct)).TickNumber;
+            await session.SaveAsync(actorPath, ct);
+
+            var engine = BuildEngineLikeTheActorDoes(settings);
+            engine.StepMany((int)ticked, ct);
+            engine.Save(directPath);
+
+            Assert.Equal(
+                await File.ReadAllTextAsync(directPath, ct),
+                await File.ReadAllTextAsync(actorPath, ct));
+        }
+        finally
+        {
+            File.Delete(actorPath);
+            File.Delete(directPath);
+        }
+    }
+
+    private static SimulationEngine BuildEngineLikeTheActorDoes(GameSettings settings)
     {
         var asset = WorldCatalog.Find(WorldId);
         Assert.NotNull(asset);
@@ -74,6 +116,8 @@ public sealed class ActorEngineParityTests : IAsyncLifetime
         GameWorldSeeder.Seed(state, worldResult, countriesPath);
         state.Metadata["worldName"] = asset.DisplayName;
         state.Metadata[GameManifestMetadata.ScenarioIdKey] = WorldId;
+        // Saves also carry the session settings.
+        SessionSaveSettings.Write(state.Metadata, settings);
 
         var definition = GameDefinition.CreateDefault(
             scenarioId: WorldId,

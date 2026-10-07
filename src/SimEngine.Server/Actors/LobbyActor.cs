@@ -1,6 +1,6 @@
 using Akka.Actor;
 using SimEngine.Contracts;
-using SimEngine.Server.Worlds;
+using SimEngine.Game.Worlds;
 
 namespace SimEngine.Server.Actors;
 
@@ -14,6 +14,7 @@ namespace SimEngine.Server.Actors;
 public sealed class LobbyActor : ReceiveActor
 {
     private static readonly TimeSpan AskTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(10);
 
     private readonly Dictionary<string, GameListing> _games = new(StringComparer.Ordinal);
     private readonly IActorRef _sessions;
@@ -28,11 +29,12 @@ public sealed class LobbyActor : ReceiveActor
         _sessions = sessions;
 
         Receive<LobbyProtocol.CreateGame>(CreateGame);
+        Receive<LobbyProtocol.CreateGameFromSave>(CreateGameFromSave);
         Receive<GameInitialized>(OnGameInitialized);
         Receive<GameInitFailed>(m => m.ReplyTo.Tell(new Status.Failure(m.Error)));
-        Receive<LobbyProtocol.ListGames>(_ => Sender.Tell(ListGames()));
-        Receive<LobbyProtocol.GetGame>(msg =>
-            Sender.Tell(new LobbyProtocol.GameLookupResult(_games.GetValueOrDefault(msg.SessionId))));
+        Receive<LobbyProtocol.ListGames>(_ => { ListGames().PipeTo(Sender); });
+        Receive<LobbyProtocol.GetGame>(GetGame);
+        Receive<PruneEnded>(PruneEndedGames);
         Receive<LobbyProtocol.RemoveGame>(RemoveGame);
         Receive<RemoveGameDone>(m => m.ReplyTo.Tell(true));
         Receive<LobbyProtocol.ListWorlds>(_ => Sender.Tell(ListWorlds()));
@@ -63,7 +65,29 @@ public sealed class LobbyActor : ReceiveActor
             AskTimeout)
             .ContinueWith<object>(t => t.IsFaulted || t.IsCanceled
                 ? new GameInitFailed(Flatten(t.Exception), replyTo)
-                : new GameInitialized(sessionId, request, t.Result, replyTo))
+                : new GameInitialized(sessionId, request.Name, t.Result, replyTo))
+            .PipeTo(Self);
+    }
+
+    private void CreateGameFromSave(LobbyProtocol.CreateGameFromSave msg)
+    {
+        try
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(msg.Name);
+            ArgumentException.ThrowIfNullOrWhiteSpace(msg.SavePath);
+        }
+        catch (ArgumentException ex)
+        {
+            Sender.Tell(new Status.Failure(ex));
+            return;
+        }
+
+        var sessionId = Guid.NewGuid().ToString("N");
+        var replyTo = Sender;
+        _sessions.Ask<SessionInfo>(new SessionProtocol.InitializeFromSave(sessionId, msg.SavePath), AskTimeout)
+            .ContinueWith<object>(t => t.IsFaulted || t.IsCanceled
+                ? new GameInitFailed(Flatten(t.Exception), replyTo)
+                : new GameInitialized(sessionId, msg.Name, t.Result, replyTo))
             .PipeTo(Self);
     }
 
@@ -72,8 +96,8 @@ public sealed class LobbyActor : ReceiveActor
         var listing = new GameListing
         {
             SessionId = msg.SessionId,
-            Name = msg.Request.Name,
-            WorldId = msg.Request.WorldId,
+            Name = msg.Name,
+            WorldId = msg.Info.WorldId,
             WorldName = msg.Info.WorldName,
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -82,10 +106,73 @@ public sealed class LobbyActor : ReceiveActor
         msg.ReplyTo.Tell(listing);
     }
 
-    private GameListing[] ListGames() =>
-        [.. _games.Values
+    /// <summary>Lists live games; games whose session has ended are dropped and removed.</summary>
+    private Task<GameListing[]> ListGames()
+    {
+        var self = Self;
+        var listings = _games.Values
             .OrderBy(g => g.CreatedAt)
-            .ThenBy(g => g.SessionId, StringComparer.Ordinal)];
+            .ThenBy(g => g.SessionId, StringComparer.Ordinal)
+            .Select(WithLiveStatus)
+            .ToArray();
+        return Task.WhenAll(listings).ContinueWith(
+            t =>
+            {
+                var ended = t.Result.Where(g => g.Stage == SessionStage.Ended).Select(g => g.SessionId).ToArray();
+                if (ended.Length > 0)
+                {
+                    self.Tell(new PruneEnded(ended));
+                }
+
+                return t.Result.Where(g => g.Stage != SessionStage.Ended).ToArray();
+            },
+            TaskScheduler.Default);
+    }
+
+    private void GetGame(LobbyProtocol.GetGame msg)
+    {
+        if (!_games.TryGetValue(msg.SessionId, out var listing))
+        {
+            Sender.Tell(new LobbyProtocol.GameLookupResult(null));
+            return;
+        }
+
+        var self = Self;
+        WithLiveStatus(listing)
+            .ContinueWith(
+                t =>
+                {
+                    if (t.Result.Stage != SessionStage.Ended)
+                    {
+                        return new LobbyProtocol.GameLookupResult(t.Result);
+                    }
+
+                    self.Tell(new PruneEnded([t.Result.SessionId]));
+                    return new LobbyProtocol.GameLookupResult(null);
+                },
+                TaskScheduler.Default)
+            .PipeTo(Sender);
+    }
+
+    private void PruneEndedGames(PruneEnded msg)
+    {
+        foreach (var sessionId in msg.SessionIds)
+        {
+            if (_games.Remove(sessionId))
+            {
+                _ = _sessions.Ask<Ack>(new SessionProtocol.Shutdown(sessionId), AskTimeout);
+            }
+        }
+    }
+
+    /// <summary>Fills stage and player count from the session; falls back to the stored listing on failure.</summary>
+    private Task<GameListing> WithLiveStatus(GameListing listing) =>
+        _sessions.Ask<SessionStatus>(new SessionProtocol.GetStatus(listing.SessionId), StatusTimeout)
+            .ContinueWith(
+                t => t.IsCompletedSuccessfully
+                    ? listing with { Stage = t.Result.Stage, PlayerCount = t.Result.Players.Length }
+                    : listing,
+                TaskScheduler.Default);
 
     private void RemoveGame(LobbyProtocol.RemoveGame msg)
     {
@@ -112,7 +199,9 @@ public sealed class LobbyActor : ReceiveActor
             : new InvalidOperationException("Session initialization failed.");
     }
 
-    private sealed record GameInitialized(string SessionId, CreateGameRequest Request, SessionInfo Info, IActorRef ReplyTo);
+    private sealed record GameInitialized(string SessionId, string Name, SessionInfo Info, IActorRef ReplyTo);
+
+    private sealed record PruneEnded(string[] SessionIds);
 
     private sealed record GameInitFailed(Exception Error, IActorRef ReplyTo);
 

@@ -6,8 +6,8 @@ namespace SimEngine.Server.Actors;
 /// <summary>
 /// Akka actor representing a single player. Buffers the player's commands and
 /// tracks which session the player has joined; flushing forwards the buffered
-/// commands to the session actor (routed through <see cref="_sessions"/>),
-/// which applies them at its next step boundary. The entity id is the player id.
+/// commands (tagged with this player's id) to the session actor (routed through
+/// <see cref="_sessions"/>), which validates and applies them. The entity id is the player id.
 /// </summary>
 public sealed class PlayerActor : ReceiveActor
 {
@@ -37,6 +37,7 @@ public sealed class PlayerActor : ReceiveActor
         Receive<PlayerProtocol.SubmitCommand>(SubmitCommand);
         Receive<PlayerProtocol.FlushCommands>(FlushCommands);
         Receive<FlushDone>(m => { _buffer.Clear(); m.ReplyTo.Tell(m.Count); });
+        Receive<FlushFailed>(m => { _buffer.Clear(); m.ReplyTo.Tell(new Status.Failure(m.Error)); });
         Receive<PlayerProtocol.GetCurrentSession>(_ =>
             Sender.Tell(new PlayerProtocol.CurrentSessionResult(_sessionId)));
         Receive<PlayerProtocol.GetBufferedCommandCount>(_ => Sender.Tell(_buffer.Count));
@@ -126,8 +127,10 @@ public sealed class PlayerActor : ReceiveActor
 
         var commands = _buffer.ToArray();
         var replyTo = Sender;
-        _sessions.Ask<Ack>(new SessionProtocol.EnqueueCommands(_sessionId, commands), AskTimeout)
-            .ContinueWith<object>(_ => new FlushDone(commands.Length, replyTo))
+        _sessions.Ask<Ack>(new SessionProtocol.EnqueueCommands(_sessionId, _playerId, commands), AskTimeout)
+            .ContinueWith<object>(t => t.IsFaulted || t.IsCanceled
+                ? new FlushFailed(Flatten(t.Exception), replyTo)
+                : new FlushDone(commands.Length, replyTo))
             .PipeTo(Self);
     }
 
@@ -139,7 +142,7 @@ public sealed class PlayerActor : ReceiveActor
         var flattened = aggregate?.Flatten().InnerExceptions;
         return flattened is { Count: > 0 }
             ? flattened[0]
-            : new InvalidOperationException("Join failed.");
+            : new InvalidOperationException("Session request failed.");
     }
 
     private sealed record JoinSucceeded(string SessionId, IActorRef ReplyTo);
@@ -149,4 +152,6 @@ public sealed class PlayerActor : ReceiveActor
     private sealed record LeaveDone(IActorRef ReplyTo);
 
     private sealed record FlushDone(int Count, IActorRef ReplyTo);
+
+    private sealed record FlushFailed(Exception Error, IActorRef ReplyTo);
 }

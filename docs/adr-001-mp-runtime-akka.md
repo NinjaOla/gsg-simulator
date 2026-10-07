@@ -125,3 +125,16 @@ This keeps simulation code testable and portable.
 - Use `docs/multiplayer-implementation-plan.md` as the phased rollout plan.
 - Keep README as the current architecture overview.
 - Build local server + local client mode before cluster sharding.
+
+## Addendum (2026-10) — client boundary is a gateway, not Akka remoting
+
+Akka stays the server runtime. Clients no longer talk to server actors over Akka.Remote:
+
+- **Server side:** a `GatewayActor` accepts connections from a pluggable transport (`SimEngine.Networking`: in-process, TCP, later Steam). One `ConnectionActor` per client then decodes a closed wire protocol (`SimEngine.Contracts.Wire`), binds the player identity to the connection, and authorizes requests before forwarding them to lobby/session actors.
+- **Single-player:** uses the same gateway over the in-process transport.
+- **Why:**
+  - Steam networking is SteamID-addressed and message-based, which doesn't fit Akka.Remote's `host:port` transport.
+  - Exposing remoting to untrusted peers would let them message any actor and spoof player ids.
+- **Akka.Remote/Cluster** remain available between trusted server nodes.
+
+See `docs/console-game-loop-plan.md`, Phase 4.

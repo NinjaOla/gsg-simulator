@@ -1,6 +1,5 @@
-using SimEngine.Game.Components;
 using SimEngine.Ids;
-using SimEngine.State.Components;
+using SimEngine.State.Loading;
 using Spectre.Console;
 
 namespace SimEngine.Game.Ui.Console.Game.Commands;
@@ -20,17 +19,17 @@ public sealed class ProvincesCommand : ICommand
         table.AddColumns("[bold]ID[/]", "[bold]Name[/]", "[bold]Terrain[/]", "[bold]Lat[/]", "[bold]Lon[/]", "[bold]Neighbors[/]");
 
         int count = 0;
-        foreach (var (id, comp) in session.Engine.State.Entities.Query<ProvinceComponent>())
+        foreach (var province in session.World.Provinces)
         {
             if (count++ >= MaxDisplay) break;
-            var pid = ProvinceId.OfEntity(id);
-            var neighbors = session.Engine.State.Adjacency.NeighborsOf(pid).Length;
-            var lat = comp.CentroidLatE6 / 1_000_000.0;
-            var lon = comp.CentroidLonE6 / 1_000_000.0;
+            var pid = province.ProvinceId;
+            var neighbors = session.World.Adjacency.NeighborsOf(pid).Length;
+            var lat = province.CentroidLatE6 / 1_000_000.0;
+            var lon = province.CentroidLonE6 / 1_000_000.0;
             table.AddRow(
                 pid.Value.ToString(),
-                Markup.Escape(comp.Name),
-                comp.Terrain.ToString(),
+                Markup.Escape(province.Name),
+                province.Terrain.ToString(),
                 $"{lat:F2}",
                 $"{lon:F2}",
                 neighbors.ToString());
@@ -38,7 +37,7 @@ public sealed class ProvincesCommand : ICommand
 
         AnsiConsole.Write(table);
 
-        var total = session.Engine.State.Entities.CountOf<ProvinceComponent>();
+        var total = session.World.Provinces.Count;
         if (total > MaxDisplay)
             AnsiConsole.MarkupLine($"[dim]... {total - MaxDisplay} more. Use [yellow]province <id>[/] for detail.[/]");
     }
@@ -70,7 +69,7 @@ public sealed class ProvinceCommand : ICommand
         }
 
         var (pid, comp) = found.Value;
-        var neighbors = session.Engine.State.Adjacency.NeighborsOf(pid);
+        var neighbors = session.World.Adjacency.NeighborsOf(pid);
         var lat = comp.CentroidLatE6 / 1_000_000.0;
         var lon = comp.CentroidLonE6 / 1_000_000.0;
 
@@ -78,42 +77,27 @@ public sealed class ProvinceCommand : ICommand
         tree.AddNode($"Terrain: [yellow]{comp.Terrain}[/]");
         tree.AddNode($"Centroid: {lat:F4} lat, {lon:F4} lon");
 
-        var eid = pid.AsEntity();
-        if (session.Engine.State.Entities.TryGet<PopulationComponent>(eid, out var pop))
-        {
-            tree.AddNode($"Population: [cyan]{pop.Population:N0}[/]  Growth: [cyan]{pop.GrowthRateE6 / 10_000.0:F2}%[/]/yr");
-        }
-
-        if (session.Engine.State.Entities.TryGet<EconomyComponent>(eid, out var eco))
-        {
-            tree.AddNode($"Production: [cyan]{eco.ProductionE2 / 100.0:F2}[/]/mo");
-        }
-
         var neighborsNode = tree.AddNode($"Neighbors ({neighbors.Length})");
         foreach (var n in neighbors)
         {
-            var label = session.Engine.State.Entities.TryGet<ProvinceComponent>(n.AsEntity(), out var nc)
-                ? Markup.Escape(nc.Name)
-                : $"P#{n.Value}";
-            neighborsNode.AddNode($"P#{n.Value} — {label}");
+            neighborsNode.AddNode($"P#{n.Value} — {ProvinceLabel(session, n)}");
         }
 
         AnsiConsole.Write(tree);
     }
 
-    internal static (ProvinceId, ProvinceComponent)? FindProvince(GameSession session, string query)
-    {
-        if (uint.TryParse(query, out var idVal))
-        {
-            var pid = new ProvinceId(idVal);
-            if (session.Engine.State.Entities.TryGet<ProvinceComponent>(pid.AsEntity(), out var comp))
-                return (pid, comp);
-        }
+    internal static string ProvinceLabel(GameSession session, ProvinceId id) =>
+        session.World.TryGetProvince(id, out var p) ? Markup.Escape(p.Name) : $"P#{id.Value}";
 
-        foreach (var (eid, c) in session.Engine.State.Entities.Query<ProvinceComponent>())
+    internal static (ProvinceId, ProvinceSeed)? FindProvince(GameSession session, string query)
+    {
+        if (uint.TryParse(query, out var idVal) && session.World.TryGetProvince(new ProvinceId(idVal), out var byId))
+            return (byId.ProvinceId, byId);
+
+        foreach (var p in session.World.Provinces)
         {
-            if (c.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
-                return (ProvinceId.OfEntity(eid), c);
+            if (p.Name.Contains(query, StringComparison.OrdinalIgnoreCase))
+                return (p.ProvinceId, p);
         }
 
         return null;

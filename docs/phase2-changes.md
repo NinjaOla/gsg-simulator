@@ -1,5 +1,7 @@
 # Multiplayer Architecture — Phase 2 Overview
 
+> **Superseded (historical).** This describes the earlier Orleans-based Phase 2. The runtime is now Akka.NET; see `adr-001-mp-runtime-akka.md` and `multiplayer-implementation-plan.md`.
+
 ## Summary
 
 Phase 2 migrates ConsoleHost to run on top of an **in-process Orleans silo**, routing tick advancement through a `GameSessionGrain` while preserving direct engine access for local queries. This lays the groundwork for Phase 3 (true multiplayer with remote clients).

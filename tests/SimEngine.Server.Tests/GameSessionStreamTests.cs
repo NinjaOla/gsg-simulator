@@ -30,27 +30,25 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
     [Fact]
-    public async Task Advance_PushesTickUpdateAndEvents_ToSubscribedActor()
+    public async Task DebugStep_PushesTickUpdatesAndEvents_ToSubscribedActor()
     {
         const string sessionId = "stream-session";
         var session = _harness.Client.GetSession(sessionId);
-        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
+        await session.InitializeForDebugAsync(WorldId, StartDate, seed: 42, Ct);
 
         var collector = new UpdateCollector();
-        var subscriber = _harness.System.ActorOf(Props.Create(() => new CollectorActor(collector)));
+        var subscriber = _harness.System.ActorOf(Props.Create(() => new CollectorActor(collector, sessionId)));
 
         await session.SubscribeAsync(subscriber, Ct);
         try
         {
             // 40 ticks crosses a month boundary, so EconomySystem emits income events.
-            await session.AdvanceAsync(40, Ct);
+            await session.StepAsync(40, Ct);
 
-            await WaitUntilAsync(() => collector.Count > 0);
+            await WaitUntilAsync(() => collector.Last?.Tick.TickNumber == 40);
 
-            var update = collector.Last!;
-            Assert.Equal(40, update.Tick.TickNumber);
-            Assert.Equal(40, update.Tick.TicksExecuted);
-            Assert.Contains(update.Events, e => e.Contains("collected", StringComparison.Ordinal));
+            Assert.Equal(40, collector.TicksExecuted);
+            Assert.Contains(collector.Events, e => e.Contains("collected", StringComparison.Ordinal));
         }
         finally
         {
@@ -63,7 +61,7 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
     {
         const string sessionId = "delta-session";
         var session = _harness.Client.GetSession(sessionId);
-        await session.InitializeAsync(WorldId, StartDate, seed: 42, Ct);
+        await session.InitializeForDebugAsync(WorldId, StartDate, seed: 42, Ct);
 
         // A client connects: fetch the baseline snapshot, then subscribe for deltas.
         var snapshot = await session.GetSnapshotAsync(Ct);
@@ -75,13 +73,13 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
         Assert.Equal(0L, alphaSeeded.FundsE2);
         Assert.Equal(0L, betaSeeded.FundsE2);
 
-        var subscriber = _harness.System.ActorOf(Props.Create(() => new CacheApplyActor(cache)));
+        var subscriber = _harness.System.ActorOf(Props.Create(() => new CacheApplyActor(cache, sessionId)));
 
         await session.SubscribeAsync(subscriber, Ct);
         try
         {
             // 40 ticks crosses a month boundary, so EconomySystem changes treasury.
-            await session.AdvanceAsync(40, Ct);
+            await session.StepAsync(40, Ct);
 
             await WaitUntilAsync(() => cache.TickNumber == 40);
 
@@ -119,12 +117,18 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
     private sealed class UpdateCollector
     {
         private readonly object _gate = new();
+        private readonly List<string> _events = [];
         private SessionStreamUpdate? _last;
-        private int _count;
+        private int _ticksExecuted;
 
-        public int Count
+        public int TicksExecuted
         {
-            get { lock (_gate) { return _count; } }
+            get { lock (_gate) { return _ticksExecuted; } }
+        }
+
+        public IReadOnlyList<string> Events
+        {
+            get { lock (_gate) { return _events.ToArray(); } }
         }
 
         public SessionStreamUpdate? Last
@@ -137,24 +141,33 @@ public sealed class GameSessionStreamTests : IAsyncLifetime
             lock (_gate)
             {
                 _last = update;
-                _count++;
+                _ticksExecuted += update.Tick.TicksExecuted;
+                _events.AddRange(update.Events);
             }
         }
     }
 
     private sealed class CollectorActor : ReceiveActor
     {
-        public CollectorActor(UpdateCollector collector)
+        public CollectorActor(UpdateCollector collector, string sessionId)
         {
-            Receive<SessionStreamUpdate>(collector.Add);
+            Receive<SessionStreamUpdate>(update =>
+            {
+                collector.Add(update);
+                Sender.Tell(new SessionProtocol.AckUpdate(sessionId, update.Sequence));
+            });
         }
     }
 
     private sealed class CacheApplyActor : ReceiveActor
     {
-        public CacheApplyActor(SessionStateCache cache)
+        public CacheApplyActor(SessionStateCache cache, string sessionId)
         {
-            Receive<SessionStreamUpdate>(cache.Apply);
+            Receive<SessionStreamUpdate>(update =>
+            {
+                cache.Apply(update);
+                Sender.Tell(new SessionProtocol.AckUpdate(sessionId, update.Sequence));
+            });
         }
     }
 }

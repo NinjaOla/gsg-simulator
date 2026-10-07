@@ -1,4 +1,7 @@
+using SimEngine.Client;
+using SimEngine.Contracts;
 using SimEngine.Game.Ui.Console.Game.Commands;
+using SimEngine.Game.Ui.Console.Ui;
 using Spectre.Console;
 
 namespace SimEngine.Game.Ui.Console.Game;
@@ -7,46 +10,63 @@ public static class GameLoop
 {
     public static GameSession? Run(GameSession session)
     {
+        string? endReason;
+        IAsyncDisposable? owned = null;
         using (session)
         {
-            var registry = BuildRegistry();
-            RenderWelcome(session);
-
-            while (!session.ShouldQuit)
+            new GameScreen(session, BuildRegistry()).Run();
+            endReason = session.State.EndReason;
+            if (session.PendingLoad is not null)
             {
-                RenderHeader(session);
-
-                var input = AnsiConsole.Prompt(
-                    new TextPrompt<string>("[grey]>[/] ")
-                        .AllowEmpty());
-
-                if (string.IsNullOrWhiteSpace(input))
-                    continue;
-
-                if (!registry.TryExecute(session, input))
-                    AnsiConsole.MarkupLine($"[red]Unknown command:[/] {Markup.Escape(input)}. Type [yellow]help[/].");
+                // The loaded game lives on the same server, so keep the connection.
+                owned = session.DetachOwned();
             }
         }
 
-        return session.ReplacementSession;
+        if (session.PendingLoad is { } loaded)
+        {
+            return EnterLoadedLobby(session, loaded, owned);
+        }
+
+        // Ended by the server (host left, connection lost), not by this player.
+        if (endReason is not null)
+        {
+            MainMenu.ShowNotice($"[yellow]The game ended:[/] {Markup.Escape(endReason)}");
+        }
+
+        return null;
     }
 
-    private static void RenderWelcome(GameSession session)
+    private static GameSession? EnterLoadedLobby(GameSession previous, GameListing listing, IAsyncDisposable? owned)
     {
-        AnsiConsole.Clear();
-        AnsiConsole.Write(new Rule($"[bold gold1]{Markup.Escape(session.WorldName)}[/]").RuleStyle("gold1 dim"));
-        AnsiConsole.MarkupLine(
-            $"[dim]{session.ProvinceCount} provinces · {session.AdjacencyEdgeCount} borders · " +
-            "type [yellow]help[/] for commands[/]");
-        AnsiConsole.WriteLine();
-    }
+        try
+        {
+            var lobby = GameSessionFactory.JoinLoadedGame(previous.Client, listing, previous.Services, owned);
+            owned = null;
+            using (lobby)
+            {
+                // No owned connection means the local single-player server.
+                if (lobby.Owned is null)
+                {
+                    lobby.UpdateSettings(lobby.State.Settings with { AllowDebugCommands = true });
+                }
 
-    private static void RenderHeader(GameSession session)
-    {
-        var t = session.Engine.Time.GetUtcNow();
-        AnsiConsole.Write(new Rule(
-            $"[bold]{t:yyyy-MM-dd}[/]  [dim]tick {session.Engine.TickNumber}[/]")
-            .RuleStyle("dim"));
+                var shareAddresses = lobby.Owned is MultiplayerConnection { Server: { } server }
+                    ? HostGameFlow.GetShareAddresses(server.Port)
+                    : null;
+                return LobbyScreen.Run(lobby, shareAddresses);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or TimeoutException or ArgumentException or InvalidOperationException
+            or ContentMismatchException or CommandRejectedException or RemoteRequestException)
+        {
+            MainMenu.ShowNotice($"[red]Could not open the loaded game:[/] {Markup.Escape(ex.Message)}");
+            return null;
+        }
+        finally
+        {
+            owned?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
     }
 
     private static CommandRegistry BuildRegistry()
@@ -71,7 +91,7 @@ public static class GameLoop
         // Build registry once to pass to HelpCommand, then rebuild with help included.
         var reg = new CommandRegistry(baseCommands);
         var help = new HelpCommand(reg);
-        return new CommandRegistry([help, ..baseCommands]);
+        return new CommandRegistry([help, .. baseCommands]);
     }
 }
 

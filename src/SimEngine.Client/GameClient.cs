@@ -1,94 +1,151 @@
-using Akka.Actor;
-using Akka.Hosting;
+using System.Collections.Concurrent;
 using SimEngine.Contracts;
+using SimEngine.Contracts.Wire;
+using SimEngine.Networking;
 
 namespace SimEngine.Client;
 
 /// <summary>
-/// Client-side facade over the SimEngine server actor topology. Holds resolved
-/// references to the session entity host and the singleton lobby, and hands out
-/// <see cref="SessionClient"/> handles. Works both in-process (single-player,
-/// resolved from the local <see cref="ActorRegistry"/>) and against a remote
-/// server (resolved by actor path).
+/// Client for a SimEngine server reached over any transport (in-process for
+/// single-player, TCP or Steam for multiplayer). The server assigns
+/// <see cref="PlayerId"/> at connect time and uses it for every request.
 /// </summary>
-public sealed class GameClient
+public sealed class GameClient : IAsyncDisposable
 {
-    private static readonly TimeSpan ResolveTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan HandshakeTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly ActorSystem _system;
-    private readonly IActorRef _sessions;
-    private readonly IActorRef _lobby;
+    private readonly ConcurrentDictionary<string, SessionSubscription> _subscriptions = new(StringComparer.Ordinal);
 
-    private GameClient(ActorSystem system, IActorRef sessions, IActorRef lobby)
+    private GameClient(ITransportConnection transport)
     {
-        _system = system;
-        _sessions = sessions;
-        _lobby = lobby;
+        Connection = new ClientConnection(transport, OnPush);
+        Connection.Closed.ContinueWith(
+            t =>
+            {
+                foreach (var subscription in _subscriptions.Values)
+                {
+                    subscription.OnEnded($"Connection lost: {t.Result}");
+                }
+            },
+            TaskScheduler.Default);
     }
 
-    /// <summary>The actor system backing this client.</summary>
-    public ActorSystem System => _system;
+    /// <summary>The id the server assigned to this connection.</summary>
+    public string PlayerId { get; private set; } = string.Empty;
 
-    /// <summary>
-    /// Creates a client bound to an in-process server whose actors are already
-    /// registered in <paramref name="registry"/> (single-player / tests).
-    /// </summary>
-    public static GameClient FromLocalRegistry(ActorSystem system, IReadOnlyActorRegistry registry)
-    {
-        ArgumentNullException.ThrowIfNull(system);
-        ArgumentNullException.ThrowIfNull(registry);
+    /// <summary>Completes with the reason once the connection to the server is closed.</summary>
+    public Task<string> Closed => Connection.Closed;
 
-        var sessions = registry.Get<SessionActorsMarker>();
-        var lobby = registry.Get<LobbyMarker>();
-        return new GameClient(system, sessions, lobby);
-    }
+    internal ClientConnection Connection { get; }
 
-    /// <summary>
-    /// Creates a client connected to a remote server by resolving the well-known
-    /// session host and lobby actor paths under <paramref name="remoteRootPath"/>
-    /// (for example <c>akka.tcp://SimEngineServer@host:port/user</c>).
-    /// </summary>
-    public static async Task<GameClient> ConnectRemoteAsync(
-        ActorSystem system,
-        string remoteRootPath,
+    /// <summary>Connects to <paramref name="endpoint"/> and performs the handshake.</summary>
+    public static async Task<GameClient> ConnectAsync(
+        TransportRegistry transports,
+        TransportEndpoint endpoint,
+        string playerName,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(system);
-        ArgumentException.ThrowIfNullOrWhiteSpace(remoteRootPath);
-
-        var root = remoteRootPath.TrimEnd('/');
-        var sessions = await system.ActorSelection($"{root}/{ActorNames.Sessions}")
-            .ResolveOne(ResolveTimeout, ct).ConfigureAwait(false);
-        var lobby = await system.ActorSelection($"{root}/{ActorNames.Lobby}")
-            .ResolveOne(ResolveTimeout, ct).ConfigureAwait(false);
-
-        return new GameClient(system, sessions, lobby);
+        ArgumentNullException.ThrowIfNull(transports);
+        var transport = await transports.ConnectAsync(endpoint, ct).ConfigureAwait(false);
+        return await ConnectAsync(transport, playerName, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Gets a handle for the session with the given id.</summary>
-    public SessionClient GetSession(string sessionId) => new(_sessions, sessionId);
-
-    /// <summary>Creates and initializes a new game, returning its listing.</summary>
-    public Task<GameListing> CreateGameAsync(CreateGameRequest request, CancellationToken ct = default) =>
-        _lobby.Ask<GameListing>(new LobbyProtocol.CreateGame(request), ResolveTimeout, ct);
-
-    /// <summary>Lists games created through the lobby.</summary>
-    public Task<GameListing[]> ListGamesAsync(CancellationToken ct = default) =>
-        _lobby.Ask<GameListing[]>(new LobbyProtocol.ListGames(), ResolveTimeout, ct);
-
-    /// <summary>Gets a single game, or <c>null</c> if unknown.</summary>
-    public async Task<GameListing?> GetGameAsync(string sessionId, CancellationToken ct = default)
+    /// <summary>Performs the handshake on an open connection; disposes it on failure.</summary>
+    public static async Task<GameClient> ConnectAsync(
+        ITransportConnection transport,
+        string playerName,
+        CancellationToken ct = default)
     {
-        var result = await _lobby.Ask<LobbyProtocol.GameLookupResult>(
-            new LobbyProtocol.GetGame(sessionId), ResolveTimeout, ct).ConfigureAwait(false);
-        return result.Listing;
-    }
+        ArgumentNullException.ThrowIfNull(transport);
+        ArgumentException.ThrowIfNullOrWhiteSpace(playerName);
 
-    /// <summary>Removes a game and shuts its session down.</summary>
-    public Task<bool> RemoveGameAsync(string sessionId, CancellationToken ct = default) =>
-        _lobby.Ask<bool>(new LobbyProtocol.RemoveGame(sessionId), ResolveTimeout, ct);
+        var client = new GameClient(transport);
+        try
+        {
+            var welcome = await client.Connection.RequestAsync<ServerMessages.WelcomeReply>(
+                id => new ClientMessages.Hello(id, WireProtocol.Version, playerName), HandshakeTimeout, ct).ConfigureAwait(false);
+            client.PlayerId = welcome.PlayerId;
+            return client;
+        }
+        catch
+        {
+            await client.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
 
     /// <summary>Lists the worlds a game can be created from.</summary>
-    public Task<WorldOption[]> ListWorldsAsync(CancellationToken ct = default) =>
-        _lobby.Ask<WorldOption[]>(new LobbyProtocol.ListWorlds(), ResolveTimeout, ct);
+    public async Task<WorldOption[]> ListWorldsAsync(CancellationToken ct = default) =>
+        (await Connection.RequestAsync<ServerMessages.WorldsReply>(
+            id => new ClientMessages.ListWorlds(id), RequestTimeout, ct).ConfigureAwait(false)).Worlds;
+
+    /// <summary>Lists games that have not ended.</summary>
+    public async Task<GameListing[]> ListGamesAsync(CancellationToken ct = default) =>
+        (await Connection.RequestAsync<ServerMessages.GamesReply>(
+            id => new ClientMessages.ListGames(id), RequestTimeout, ct).ConfigureAwait(false)).Games;
+
+    /// <summary>Gets a single game, or <c>null</c> if unknown or ended.</summary>
+    public async Task<GameListing?> GetGameAsync(string sessionId, CancellationToken ct = default) =>
+        (await Connection.RequestAsync<ServerMessages.GameReply>(
+            id => new ClientMessages.GetGame(id, sessionId), RequestTimeout, ct).ConfigureAwait(false)).Game;
+
+    /// <summary>Creates a new game in the lobby stage.</summary>
+    public async Task<GameListing> CreateGameAsync(CreateGameRequest request, CancellationToken ct = default) =>
+        RequireGame(await Connection.RequestAsync<ServerMessages.GameReply>(
+            id => new ClientMessages.CreateGame(id, request), RequestTimeout, ct).ConfigureAwait(false));
+
+    /// <summary>Creates a game from a save on the server (a file name in its save directory).</summary>
+    public async Task<GameListing> LoadGameAsync(string name, string savePath, CancellationToken ct = default) =>
+        RequireGame(await Connection.RequestAsync<ServerMessages.GameReply>(
+            id => new ClientMessages.LoadGame(id, name, savePath), RequestTimeout, ct).ConfigureAwait(false));
+
+    /// <summary>Removes a game this client created or hosts. Returns <c>false</c> if it no longer exists.</summary>
+    public Task<bool> RemoveGameAsync(string sessionId, CancellationToken ct = default) =>
+        Connection.TryRequestAsync(
+            id => new ClientMessages.RemoveGame(id, sessionId), WireErrorCode.UnknownSession, RequestTimeout, ct);
+
+    /// <summary>
+    /// Joins a game in the lobby stage with the locally computed content hash,
+    /// leaving any current game. The first player to join becomes host.
+    /// Throws <see cref="ContentMismatchException"/> if the content differs.
+    /// </summary>
+    public async Task<SessionClient> JoinGameAsync(string sessionId, string contentHash, CancellationToken ct = default)
+    {
+        await Connection.RequestAsync<ServerMessages.OkReply>(
+            id => new ClientMessages.JoinGame(id, sessionId, contentHash), RequestTimeout, ct).ConfigureAwait(false);
+        return new SessionClient(this, sessionId);
+    }
+
+    public ValueTask DisposeAsync() => Connection.DisposeAsync();
+
+    internal void Register(SessionSubscription subscription) =>
+        _subscriptions[subscription.SessionId] = subscription;
+
+    internal void Unregister(SessionSubscription subscription) =>
+        _subscriptions.TryRemove(KeyValuePair.Create(subscription.SessionId, subscription));
+
+    private void OnPush(ServerMessage message)
+    {
+        switch (message)
+        {
+            case ServerMessages.StreamUpdatePush push:
+                Find(push.Update.SessionId)?.OnUpdate(push.Update);
+                Connection.Send(new ClientMessages.AckUpdate(push.Update.SessionId, push.Update.Sequence));
+                break;
+            case ServerMessages.StreamSnapshotPush push:
+                Find(push.Snapshot.SessionId)?.OnSnapshot(push.Snapshot);
+                Connection.Send(new ClientMessages.AckUpdate(push.Snapshot.SessionId, push.Snapshot.Sequence));
+                break;
+            case ServerMessages.SessionEndedPush push:
+                Find(push.SessionId)?.OnEnded(push.Reason);
+                break;
+        }
+    }
+
+    private SessionSubscription? Find(string sessionId) =>
+        _subscriptions.TryGetValue(sessionId, out var subscription) ? subscription : null;
+
+    private static GameListing RequireGame(ServerMessages.GameReply reply) =>
+        reply.Game ?? throw new InvalidDataException("The server did not return the created game.");
 }

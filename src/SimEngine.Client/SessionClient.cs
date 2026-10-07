@@ -1,74 +1,67 @@
-using Akka.Actor;
 using SimEngine.Contracts;
+using SimEngine.Contracts.Wire;
 
 namespace SimEngine.Client;
 
 /// <summary>
-/// Client-side handle for a single game session. Wraps the server's session
-/// entity host (<see cref="_sessions"/>) and a fixed <see cref="SessionId"/>,
-/// translating calls into <see cref="SessionProtocol"/> Ask requests. The
-/// session actor is the sole simulation authority; this handle only sends
-/// messages and awaits replies.
+/// Handle for the session this client has joined. Every request is sent as
+/// the connection's player; the session actor stays the sole simulation authority.
 /// </summary>
 public sealed class SessionClient
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
-
-    private readonly IActorRef _sessions;
-
-    /// <summary>The session this handle targets.</summary>
-    public string SessionId { get; }
-
-    /// <summary>Creates a handle for <paramref name="sessionId"/> routed through the session host.</summary>
-    public SessionClient(IActorRef sessions, string sessionId)
+    internal SessionClient(GameClient client, string sessionId)
     {
-        ArgumentNullException.ThrowIfNull(sessions);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        _sessions = sessions;
+        Client = client;
         SessionId = sessionId;
     }
 
-    /// <summary>Initializes a new game and returns its session info.</summary>
-    public Task<SessionInfo> InitializeAsync(string worldId, DateTimeOffset startDate, ulong seed, CancellationToken ct = default) =>
-        _sessions.Ask<SessionInfo>(new SessionProtocol.Initialize(SessionId, worldId, startDate, seed), DefaultTimeout, ct);
+    public string SessionId { get; }
 
-    /// <summary>Initializes the session from a save file on the server.</summary>
-    public Task<SessionInfo> InitializeFromSaveAsync(string savePath, CancellationToken ct = default) =>
-        _sessions.Ask<SessionInfo>(new SessionProtocol.InitializeFromSave(SessionId, savePath), DefaultTimeout, ct);
+    /// <summary>The local player's id.</summary>
+    public string PlayerId => Client.PlayerId;
 
-    /// <summary>Queues a single command for the next advance.</summary>
-    public Task EnqueueCommandAsync(PlayerCommand command, CancellationToken ct = default) =>
-        _sessions.Ask<Ack>(new SessionProtocol.EnqueueCommand(SessionId, command), DefaultTimeout, ct);
+    internal GameClient Client { get; }
 
-    /// <summary>Queues a batch of commands in order.</summary>
-    public Task EnqueueCommandsAsync(PlayerCommand[] commands, CancellationToken ct = default) =>
-        _sessions.Ask<Ack>(new SessionProtocol.EnqueueCommands(SessionId, commands), DefaultTimeout, ct);
+    /// <summary>Sends a command; throws <see cref="CommandRejectedException"/> if the session rejects it.</summary>
+    public Task SendCommandAsync(PlayerCommand command, CancellationToken ct = default) =>
+        SendCommandsAsync([command], ct);
 
-    /// <summary>Applies queued commands then advances the engine by <paramref name="ticks"/>.</summary>
-    public Task<TickResult> AdvanceAsync(int ticks, CancellationToken ct = default) =>
-        _sessions.Ask<TickResult>(new SessionProtocol.Advance(SessionId, ticks), DefaultTimeout, ct);
+    /// <summary>Sends commands in order, stopping at the first rejection.</summary>
+    public Task SendCommandsAsync(PlayerCommand[] commands, CancellationToken ct = default) =>
+        Ok(id => new ClientMessages.SendCommands(id, SessionId, commands), ct);
 
-    /// <summary>Gets the full synced baseline snapshot.</summary>
-    public Task<SessionSnapshot> GetSnapshotAsync(CancellationToken ct = default) =>
-        _sessions.Ask<SessionSnapshot>(new SessionProtocol.GetSnapshot(SessionId), DefaultTimeout, ct);
+    /// <summary>Host only: starts the game from the lobby, optionally paused.</summary>
+    public Task StartGameAsync(bool paused = false, CancellationToken ct = default) =>
+        Ok(id => new ClientMessages.StartGame(id, SessionId, paused), ct);
 
-    /// <summary>Gets the ordered session members.</summary>
-    public Task<string[]> GetPlayersAsync(CancellationToken ct = default) =>
-        _sessions.Ask<string[]>(new SessionProtocol.GetPlayers(SessionId), DefaultTimeout, ct);
+    /// <summary>Host only, lobby only: replaces the game settings.</summary>
+    public Task UpdateSettingsAsync(GameSettings settings, CancellationToken ct = default) =>
+        Ok(id => new ClientMessages.UpdateSettings(id, SessionId, settings), ct);
 
-    /// <summary>Saves the engine snapshot and returns the resolved path.</summary>
-    public Task<string> SaveAsync(string savePath, CancellationToken ct = default) =>
-        _sessions.Ask<string>(new SessionProtocol.Save(SessionId, savePath), DefaultTimeout, ct);
+    /// <summary>Debug: runs ticks immediately (paused games with debug commands enabled).</summary>
+    public async Task<TickResult> DebugStepAsync(int ticks, CancellationToken ct = default) =>
+        (await Client.Connection.RequestAsync<ServerMessages.TickReply>(
+            id => new ClientMessages.DebugStep(id, SessionId, ticks), GameClient.RequestTimeout, ct).ConfigureAwait(false)).Result;
 
-    /// <summary>Subscribes an actor to per-tick <see cref="SessionStreamUpdate"/> broadcasts.</summary>
-    public Task SubscribeAsync(IActorRef subscriber, CancellationToken ct = default) =>
-        _sessions.Ask<Ack>(new SessionProtocol.Subscribe(SessionId, subscriber), DefaultTimeout, ct);
+    /// <summary>Gets stage, speed, host, settings, and players.</summary>
+    public async Task<SessionStatus> GetStatusAsync(CancellationToken ct = default) =>
+        (await Client.Connection.RequestAsync<ServerMessages.StatusReply>(
+            id => new ClientMessages.GetStatus(id, SessionId), GameClient.RequestTimeout, ct).ConfigureAwait(false)).Status;
 
-    /// <summary>Unsubscribes a previously subscribed actor.</summary>
-    public Task UnsubscribeAsync(IActorRef subscriber, CancellationToken ct = default) =>
-        _sessions.Ask<Ack>(new SessionProtocol.Unsubscribe(SessionId, subscriber), DefaultTimeout, ct);
+    /// <summary>Host only: saves on the server and returns the saved name (or full path on a local server).</summary>
+    public async Task<string> SaveAsync(string savePath, CancellationToken ct = default) =>
+        (await Client.Connection.RequestAsync<ServerMessages.SavedReply>(
+            id => new ClientMessages.SaveGame(id, SessionId, savePath), GameClient.RequestTimeout, ct).ConfigureAwait(false)).Path;
 
-    /// <summary>Ends the session and stops the actor.</summary>
-    public Task ShutdownAsync(CancellationToken ct = default) =>
-        _sessions.Ask<Ack>(new SessionProtocol.Shutdown(SessionId), DefaultTimeout, ct);
+    /// <summary>Leaves the session (no-op if already gone). The host leaving ends the session.</summary>
+    public Task LeaveAsync(CancellationToken ct = default) =>
+        Client.Connection.TryRequestAsync(
+            id => new ClientMessages.LeaveGame(id, SessionId), WireErrorCode.NotJoined, GameClient.RequestTimeout, ct);
+
+    /// <summary>Subscribes and returns a live, self-updating read model.</summary>
+    public Task<SessionSubscription> SubscribeAsync(CancellationToken ct = default) =>
+        SessionSubscription.StartAsync(this, ct);
+
+    private Task<ServerMessages.OkReply> Ok(Func<long, ClientRequest> create, CancellationToken ct) =>
+        Client.Connection.RequestAsync<ServerMessages.OkReply>(create, GameClient.RequestTimeout, ct);
 }

@@ -1,6 +1,4 @@
-using SimEngine.Game.Components;
-using SimEngine.Ids;
-using SimEngine.State;
+using SimEngine.Contracts;
 using Spectre.Console;
 
 namespace SimEngine.Game.Ui.Console.Game.Commands;
@@ -21,40 +19,24 @@ public sealed class CountryCommand : ICommand
         }
 
         var tag = args[0];
-        var found = FindCountry(session, tag);
-        if (found is null)
+        var country = FindCountry(session, tag);
+        if (country is null)
         {
             AnsiConsole.MarkupLine($"[red]No country found:[/] {Markup.Escape(tag)}");
             return;
         }
 
-        var (countryId, country) = found.Value;
-
-        session.Engine.State.Entities.TryGet<TreasuryComponent>(countryId, out var treasury);
-        var ownedCount = session.Engine.State.Relationships
-            .GetOutbound(countryId, RelationshipLabel.Owns)
-            .Count();
-
-        var tree = new Tree($"[bold]{Markup.Escape(country.DisplayName)}[/]  [dim][{Markup.Escape(country.Tag)}][/]");
-        tree.AddNode($"Provinces owned: [yellow]{ownedCount}[/]");
-        tree.AddNode($"Treasury: [cyan]{treasury.FundsE2 / 100.0:F2}[/]");
+        var tree = new Tree($"[bold]{Markup.Escape(country.DisplayName)}[/]  [dim][[{Markup.Escape(country.Tag)}]][/]");
+        tree.AddNode($"Provinces owned: [yellow]{country.ProvinceCount}[/]");
+        tree.AddNode($"Treasury: [cyan]{country.FundsE2 / 100.0:F2}[/]");
 
         AnsiConsole.Write(tree);
     }
 
-    internal static (EntityId, CountryComponent)? FindCountry(GameSession session, string tag)
-    {
-        foreach (var (id, country) in session.Engine.State.Entities.Query<CountryComponent>())
-        {
-            if (string.Equals(country.Tag, tag, StringComparison.OrdinalIgnoreCase)
-                || country.DisplayName.Contains(tag, StringComparison.OrdinalIgnoreCase))
-            {
-                return (id, country);
-            }
-        }
-
-        return null;
-    }
+    internal static CountryState? FindCountry(GameSession session, string tag) =>
+        session.State.Countries.FirstOrDefault(c =>
+            string.Equals(c.Tag, tag, StringComparison.OrdinalIgnoreCase)
+            || c.DisplayName.Contains(tag, StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class CountriesCommand : ICommand
@@ -69,19 +51,13 @@ public sealed class CountriesCommand : ICommand
         var table = new Table().Border(TableBorder.Minimal);
         table.AddColumns("[bold]Tag[/]", "[bold]Name[/]", "[bold]Provinces[/]", "[bold]Treasury[/]");
 
-        foreach (var (id, country) in session.Engine.State.Entities.Query<CountryComponent>())
+        foreach (var country in session.State.Countries)
         {
-            var provinces = session.Engine.State.Relationships
-                .GetOutbound(id, RelationshipLabel.Owns)
-                .Count();
-
-            session.Engine.State.Entities.TryGet<TreasuryComponent>(id, out var treasury);
-
             table.AddRow(
                 Markup.Escape(country.Tag),
                 Markup.Escape(country.DisplayName),
-                provinces.ToString(),
-                $"{treasury.FundsE2 / 100.0:F2}");
+                country.ProvinceCount.ToString(),
+                $"{country.FundsE2 / 100.0:F2}");
         }
 
         AnsiConsole.Write(table);

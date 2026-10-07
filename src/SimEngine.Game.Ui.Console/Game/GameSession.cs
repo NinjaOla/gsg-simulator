@@ -1,94 +1,144 @@
-using SimEngine;
 using SimEngine.Client;
-using SimEngine.Game.Events;
-using SimEngine.State.Components;
+using SimEngine.Contracts;
+using SimEngine.Game.Worlds;
 
 namespace SimEngine.Game.Ui.Console.Game;
 
 /// <summary>
 /// Client-side handle for one game session. All simulation mutations go
-/// through <see cref="Session"/> (an Akka session-actor handle);
-/// <see cref="Engine"/> is a read-only view of the actor-owned engine,
-/// available because the server runs in-process (single-player). It is only
-/// safe to read between session calls - never while an advance is in flight.
+/// through <see cref="Session"/> (requests over the client connection). Dynamic state
+/// is read from <see cref="State"/> (synced via snapshot + per-tick updates) and
+/// static data from <see cref="World"/> (loaded locally); the console never
+/// touches the server's engine.
 /// </summary>
 public sealed class GameSession : IDisposable
 {
-    private const int MaxLogEntries = 200;
+    private static readonly TimeSpan SyncTimeout = TimeSpan.FromSeconds(30);
 
-    private readonly List<string> _eventLog = [];
-    private readonly List<IDisposable> _subscriptions = [];
+    private readonly GameClient _client;
+    private readonly SessionSubscription _subscription;
+    private IAsyncDisposable? _owned;
 
-    public SimulationEngine Engine { get; }
     public SessionClient Session { get; }
+    public string PlayerId => Session.PlayerId;
+    public SessionStateCache State => _subscription.Cache;
+    public StaticWorld World { get; }
     public IServiceProvider Services { get; }
     public string WorldName { get; }
     public string SessionId { get; }
     public bool ShouldQuit { get; set; }
-    internal GameSession? ReplacementSession { get; private set; }
+    public bool IsHost => State.HostPlayerId == PlayerId;
 
-    public int ProvinceCount => Engine.State.Entities.CountOf<ProvinceComponent>();
-    public int AdjacencyEdgeCount => Engine.State.Adjacency.EdgeCount;
-    public IReadOnlyList<string> EventLog => _eventLog;
+    /// <summary>A game loaded from a save on this session's server; the loop opens its lobby after leaving this one.</summary>
+    internal GameListing? PendingLoad { get; private set; }
+
+    internal GameClient Client => _client;
+
+    public int ProvinceCount => World.Provinces.Count;
+    public int AdjacencyEdgeCount => World.Adjacency.EdgeCount;
+    public IReadOnlyList<string> EventLog => State.Events;
 
     public GameSession(
-        SimulationEngine engine,
+        GameClient client,
         SessionClient session,
+        SessionSubscription subscription,
+        StaticWorld world,
         string worldName,
-        string sessionId,
-        IServiceProvider services)
+        IServiceProvider services,
+        IAsyncDisposable? owned = null)
     {
-        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(client);
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(subscription);
+        ArgumentNullException.ThrowIfNull(world);
         ArgumentException.ThrowIfNullOrWhiteSpace(worldName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         ArgumentNullException.ThrowIfNull(services);
 
-        Engine = engine;
+        _client = client;
         Session = session;
+        _subscription = subscription;
+        World = world;
         WorldName = worldName;
-        SessionId = sessionId;
+        SessionId = session.SessionId;
         Services = services;
-
-        _subscriptions.Add(engine.Events.Subscribe<IncomeCollectedEvent>(e =>
-            AddLog(
-                $"[dim]{e.Date:yyyy-MM-dd}[/]  {e.CountryTag} collected [bold]{FormatE2(e.IncomeE2)}[/] " +
-                $"[dim](treasury {FormatE2(e.FundsE2)})[/]")));
+        _owned = owned;
     }
 
-    public void AddLog(string markup)
+    /// <summary>
+    /// Runs debug ticks on the (paused) session and waits until <see cref="State"/>
+    /// reflects the result, so callers can read the new tick/date immediately.
+    /// </summary>
+    public TickResult Advance(int ticks)
     {
-        _eventLog.Add(markup);
-        if (_eventLog.Count > MaxLogEntries)
-            _eventLog.RemoveAt(0);
+        // Console host is sync throughout; blocking here is safe (no sync context).
+        var result = Session.DebugStepAsync(ticks).GetAwaiter().GetResult();
+        if (result.TicksExecuted > 0 && !State.WaitForTick(result.TickNumber, SyncTimeout))
+        {
+            throw new TimeoutException($"Timed out waiting for tick {result.TickNumber} to sync.");
+        }
+
+        return result;
     }
 
-    /// <summary>Requests that the current session be replaced after the loop exits.</summary>
-    public void ReplaceWith(GameSession session)
+    /// <summary>Sends a command as the local player; throws <see cref="CommandRejectedException"/> on rejection.</summary>
+    public void SendCommand(PlayerCommand command)
     {
-        ArgumentNullException.ThrowIfNull(session);
+        Session.SendCommandAsync(command).GetAwaiter().GetResult();
+    }
 
-        ReplacementSession = session;
+    /// <summary>Ends this game after the loop exits and continues in the lobby of <paramref name="listing"/>.</summary>
+    public void ContinueWithLoaded(GameListing listing)
+    {
+        ArgumentNullException.ThrowIfNull(listing);
+
+        PendingLoad = listing;
         ShouldQuit = true;
     }
 
-    public void Dispose()
+    /// <summary>Takes over what the session owns (connection, hosted server) so disposing it keeps them alive.</summary>
+    internal IAsyncDisposable? DetachOwned()
     {
-        foreach (var sub in _subscriptions)
-            sub.Dispose();
-        _subscriptions.Clear();
+        var owned = _owned;
+        _owned = null;
+        return owned;
+    }
 
+    public void Dispose() => Close(_client, Session, _subscription, _owned);
+
+    /// <summary>
+    /// Best-effort teardown (the server may already be gone): unsubscribe, leave
+    /// (the host leaving ends the session), remove the game if host, then dispose
+    /// what the session owns (a multiplayer connection and hosted server).
+    /// </summary>
+    internal static void Close(GameClient client, SessionClient session, SessionSubscription subscription, IAsyncDisposable? owned)
+    {
+        var isHost = subscription.Cache.HostPlayerId == session.PlayerId;
         try
         {
-            // Console host is sync throughout; blocking here is safe (no sync context).
-            Session.ShutdownAsync().GetAwaiter().GetResult();
+            subscription.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Best-effort: the server may already be shutting down.
+        }
+
+        try
+        {
+            session.LeaveAsync().GetAwaiter().GetResult();
+            if (isHost)
+            {
+                client.RemoveGameAsync(session.SessionId).GetAwaiter().GetResult();
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+        }
+
+        try
+        {
+            owned?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
         }
     }
-
-    private static string FormatE2(long valueE2) =>
-        $"{valueE2 / 100}.{Math.Abs(valueE2 % 100):D2}";
 }

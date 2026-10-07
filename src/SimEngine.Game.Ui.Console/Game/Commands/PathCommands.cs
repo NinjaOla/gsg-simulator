@@ -1,5 +1,3 @@
-using SimEngine.Ids;
-using SimEngine.State.Components;
 using SimEngine.State.Pathfinding;
 using Spectre.Console;
 
@@ -35,8 +33,9 @@ public sealed class PathCommand : ICommand
             return;
         }
 
+        // Local preview on static adjacency; authoritative movement paths are computed by the server.
         var result = AStarPathfinder.FindPath(
-            session.Engine.State.Adjacency,
+            session.World.Adjacency,
             startId,
             goalId,
             (_, _) => 1);
@@ -47,12 +46,7 @@ public sealed class PathCommand : ICommand
             return;
         }
 
-        var crumbs = result.Nodes.Select(pid =>
-        {
-            var name = session.Engine.State.Entities.TryGet<ProvinceComponent>(pid.AsEntity(), out var c)
-                ? Markup.Escape(c.Name) : $"P#{pid.Value}";
-            return $"[bold]{name}[/]";
-        });
+        var crumbs = result.Nodes.Select(pid => $"[bold]{ProvinceCommand.ProvinceLabel(session, pid)}[/]");
 
         AnsiConsole.MarkupLine(string.Join(" [dim]->[/] ", crumbs));
         AnsiConsole.MarkupLine($"[dim]Hops: {result.Nodes.Count - 1}  Cost: {result.TotalCost}[/]");
@@ -68,7 +62,7 @@ public sealed class AdjacencyCommand : ICommand
 
     public void Execute(GameSession session, string[] args)
     {
-        var adj = session.Engine.State.Adjacency;
+        var adj = session.World.Adjacency;
 
         if (args.Length == 0)
         {
@@ -90,9 +84,7 @@ public sealed class AdjacencyCommand : ICommand
         AnsiConsole.MarkupLine($"[bold]{Markup.Escape(comp.Name)}[/] (P#{pid.Value}) — {neighbors.Length} neighbor(s):");
         foreach (var n in neighbors)
         {
-            var label = session.Engine.State.Entities.TryGet<ProvinceComponent>(n.AsEntity(), out var nc)
-                ? Markup.Escape(nc.Name) : $"P#{n.Value}";
-            AnsiConsole.MarkupLine($"  [dim]P#{n.Value}[/] {label}");
+            AnsiConsole.MarkupLine($"  [dim]P#{n.Value}[/] {ProvinceCommand.ProvinceLabel(session, n)}");
         }
     }
 }

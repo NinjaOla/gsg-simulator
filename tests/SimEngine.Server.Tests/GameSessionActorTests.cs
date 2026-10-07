@@ -1,6 +1,6 @@
 using Akka.Actor;
-using SimEngine.Client;
 using SimEngine.Contracts;
+using SimEngine.Server.Direct;
 using Xunit;
 
 namespace SimEngine.Server.Tests;
@@ -22,12 +22,12 @@ public sealed class GameSessionActorTests : IAsyncLifetime
         await _harness.DisposeAsync();
     }
 
-    private SessionClient GetSession(string sessionId) => _harness.Client.GetSession(sessionId);
+    private ActorSessionClient GetSession(string sessionId) => _harness.Client.GetSession(sessionId);
 
-    private async Task<SessionClient> NewInitializedSessionAsync(string sessionId, ulong seed = 42)
+    private async Task<ActorSessionClient> NewInitializedSessionAsync(string sessionId, ulong seed = 42)
     {
         var session = GetSession(sessionId);
-        await session.InitializeAsync(WorldId, StartDate, seed, TestContext.Current.CancellationToken);
+        await session.InitializeForDebugAsync(WorldId, StartDate, seed, TestContext.Current.CancellationToken);
         return session;
     }
 
@@ -64,22 +64,22 @@ public sealed class GameSessionActorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdvanceAsync_AdvancesTickNumber()
+    public async Task DebugStep_AdvancesTickNumber()
     {
         var session = await NewInitializedSessionAsync("step-1");
 
-        var result = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
+        var result = await session.StepAsync(1, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result.TickNumber);
         Assert.Equal(1, result.TicksExecuted);
     }
 
     [Fact]
-    public async Task AdvanceAsync_Batched_ExecutesAllTicksServerSide()
+    public async Task DebugStep_Batched_ExecutesAllTicksServerSide()
     {
         var session = await NewInitializedSessionAsync("step-batch");
 
-        var result = await session.AdvanceAsync(40, TestContext.Current.CancellationToken);
+        var result = await session.StepAsync(40, TestContext.Current.CancellationToken);
 
         Assert.Equal(40, result.TickNumber);
         Assert.Equal(40, result.TicksExecuted);
@@ -87,47 +87,15 @@ public sealed class GameSessionActorTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdvanceAsync_MultipleSteps_AccumulatesTicks()
+    public async Task DebugStep_MultipleSteps_AccumulatesTicks()
     {
         var session = await NewInitializedSessionAsync("step-multi");
 
-        await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-        await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-        var result = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
+        await session.StepAsync(1, TestContext.Current.CancellationToken);
+        await session.StepAsync(1, TestContext.Current.CancellationToken);
+        var result = await session.StepAsync(1, TestContext.Current.CancellationToken);
 
         Assert.Equal(3, result.TickNumber);
-    }
-
-    [Fact]
-    public async Task EnqueueCommand_StepCommand_ExecutesMultipleTicks()
-    {
-        var session = await NewInitializedSessionAsync("cmd-step");
-
-        await session.EnqueueCommandAsync(new StepPlayerCommand(5), TestContext.Current.CancellationToken);
-        var result = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-
-        Assert.Equal(5, result.TickNumber);
-        Assert.Equal(5, result.TicksExecuted);
-    }
-
-    [Fact]
-    public async Task EnqueueCommand_Pause_PersistsAcrossSteps_UntilResume()
-    {
-        var session = await NewInitializedSessionAsync("cmd-pause");
-
-        await session.EnqueueCommandAsync(new PausePlayerCommand(), TestContext.Current.CancellationToken);
-        var paused = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-        var stillPaused = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-
-        Assert.Equal(0, paused.TicksExecuted);
-        Assert.Equal(0, stillPaused.TicksExecuted);
-        Assert.Equal(0, stillPaused.TickNumber);
-
-        await session.EnqueueCommandAsync(new ResumePlayerCommand(), TestContext.Current.CancellationToken);
-        var resumed = await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
-
-        Assert.Equal(1, resumed.TicksExecuted);
-        Assert.Equal(1, resumed.TickNumber);
     }
 
     [Fact]
@@ -135,7 +103,7 @@ public sealed class GameSessionActorTests : IAsyncLifetime
     {
         var session = await NewInitializedSessionAsync("date");
 
-        await session.AdvanceAsync(1, TestContext.Current.CancellationToken);
+        await session.StepAsync(1, TestContext.Current.CancellationToken);
         var date = await _harness.Sessions.Ask<DateTimeOffset>(
             new SessionProtocol.GetCurrentDate("date"),
             TimeSpan.FromMinutes(1),
@@ -163,12 +131,25 @@ public sealed class GameSessionActorTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_IncludesWorldIdContentHashAndOwnership()
+    {
+        var session = await NewInitializedSessionAsync("snapshot-identity");
+
+        var snapshot = await session.GetSnapshotAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(WorldId, snapshot.WorldId);
+        Assert.False(string.IsNullOrWhiteSpace(snapshot.ContentHash));
+        Assert.Equal(2, snapshot.Countries.Single(c => c.Tag == "ALP").ProvinceCount);
+        Assert.Equal(1, snapshot.Countries.Single(c => c.Tag == "BET").ProvinceCount);
+    }
+
+    [Fact]
     public async Task GetSnapshotAsync_AfterSteps_ReflectsAdvancedTreasury()
     {
         var session = await NewInitializedSessionAsync("snapshot-stepped");
 
         // 40 ticks crosses a month boundary, so EconomySystem collects income.
-        await session.AdvanceAsync(40, TestContext.Current.CancellationToken);
+        await session.StepAsync(40, TestContext.Current.CancellationToken);
         var snapshot = await session.GetSnapshotAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(40, snapshot.TickNumber);
@@ -197,7 +178,7 @@ public sealed class GameSessionActorTests : IAsyncLifetime
         try
         {
             var original = await NewInitializedSessionAsync("save-source");
-            var beforeSave = await original.AdvanceAsync(10, TestContext.Current.CancellationToken);
+            var beforeSave = await original.StepAsync(10, TestContext.Current.CancellationToken);
             await original.SaveAsync(savePath, TestContext.Current.CancellationToken);
 
             var restored = GetSession("save-restored");
@@ -207,7 +188,8 @@ public sealed class GameSessionActorTests : IAsyncLifetime
             Assert.Equal(beforeSave.CurrentDate, info.CurrentDate);
             Assert.Equal(4, info.ProvinceCount);
 
-            var resumed = await restored.AdvanceAsync(5, TestContext.Current.CancellationToken);
+            await restored.PrepareForDebugAsync(info.ContentHash, TestContext.Current.CancellationToken);
+            var resumed = await restored.StepAsync(5, TestContext.Current.CancellationToken);
             Assert.Equal(15, resumed.TickNumber);
         }
         finally
@@ -226,17 +208,18 @@ public sealed class GameSessionActorTests : IAsyncLifetime
         {
             // Run 40 ticks (crosses a month boundary so game systems fire), save.
             var original = await NewInitializedSessionAsync("det-continued");
-            await original.AdvanceAsync(40, TestContext.Current.CancellationToken);
+            await original.StepAsync(40, TestContext.Current.CancellationToken);
             await original.SaveAsync(savePath, TestContext.Current.CancellationToken);
 
             // Branch A: keep stepping the original session.
-            await original.AdvanceAsync(25, TestContext.Current.CancellationToken);
+            await original.StepAsync(25, TestContext.Current.CancellationToken);
             await original.SaveAsync(continuedPath, TestContext.Current.CancellationToken);
 
             // Branch B: reload from the save and step the same amount.
             var restored = GetSession("det-resumed");
-            await restored.InitializeFromSaveAsync(savePath, TestContext.Current.CancellationToken);
-            await restored.AdvanceAsync(25, TestContext.Current.CancellationToken);
+            var info = await restored.InitializeFromSaveAsync(savePath, TestContext.Current.CancellationToken);
+            await restored.PrepareForDebugAsync(info.ContentHash, TestContext.Current.CancellationToken);
+            await restored.StepAsync(25, TestContext.Current.CancellationToken);
             await restored.SaveAsync(resumedPath, TestContext.Current.CancellationToken);
 
             Assert.Equal(
@@ -248,6 +231,36 @@ public sealed class GameSessionActorTests : IAsyncLifetime
             File.Delete(savePath);
             File.Delete(continuedPath);
             File.Delete(resumedPath);
+        }
+    }
+
+    [Fact]
+    public async Task InitializeFromSave_WithoutContentHash_IsRejected()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var savePath = TempSavePath();
+        try
+        {
+            var original = await NewInitializedSessionAsync("legacy-source");
+            await original.SaveAsync(savePath, ct);
+            var root = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(savePath, ct))!;
+            foreach (var entry in root["saveMetadata"]!.AsArray())
+            {
+                if ((string?)entry!["key"] == "contentHash")
+                {
+                    entry["value"] = "dev";
+                }
+            }
+
+            await File.WriteAllTextAsync(savePath, root.ToJsonString(), ct);
+
+            var error = await Assert.ThrowsAsync<InvalidDataException>(
+                () => GetSession("legacy-restored").InitializeFromSaveAsync(savePath, ct));
+            Assert.Contains("older version", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(savePath);
         }
     }
 

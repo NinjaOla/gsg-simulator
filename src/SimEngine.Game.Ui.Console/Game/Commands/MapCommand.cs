@@ -3,9 +3,8 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using SimEngine;
-using SimEngine.Game;
+using SimEngine.Game.Worlds;
 using SimEngine.Rendering;
-using SimEngine.Server.Worlds;
 using Spectre.Console;
 
 namespace SimEngine.Game.Ui.Console.Game.Commands;
@@ -13,8 +12,7 @@ namespace SimEngine.Game.Ui.Console.Game.Commands;
 /// <summary>
 /// Renders the current world's provinces to a PNG and opens it in the OS
 /// image viewer. Province polygons are not kept in engine state, so the map
-/// is rendered from the world's source GeoJSON (resolved via the world id
-/// stored in engine metadata).
+/// is rendered from the world's local source GeoJSON.
 /// </summary>
 public sealed class MapCommand : ICommand
 {
@@ -37,13 +35,7 @@ public sealed class MapCommand : ICommand
             return;
         }
 
-        if (!session.Engine.State.Metadata.TryGetValue(GameManifestMetadata.ScenarioIdKey, out var worldId)
-            || string.IsNullOrWhiteSpace(worldId))
-        {
-            AnsiConsole.MarkupLine("[red]Cannot render:[/] the active world id is unknown.");
-            return;
-        }
-
+        var worldId = session.World.WorldId;
         var asset = WorldCatalog.Find(worldId);
         if (asset is null)
         {

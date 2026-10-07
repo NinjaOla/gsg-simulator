@@ -23,12 +23,12 @@ public sealed class EventsCommand : ICommand
         bool any = false;
         foreach (var entry in slice)
         {
-            AnsiConsole.MarkupLine(entry);
+            AnsiConsole.MarkupLine(Markup.Escape(entry));
             any = true;
         }
 
         if (!any)
-            AnsiConsole.MarkupLine("[dim]No events yet. Try [yellow]step month[/] to generate some.[/]");
+            AnsiConsole.MarkupLine("[dim]No events yet. Let the game run (income is collected monthly).[/]");
     }
 }
 

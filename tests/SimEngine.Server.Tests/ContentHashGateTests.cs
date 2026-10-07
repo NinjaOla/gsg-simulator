@@ -1,7 +1,7 @@
 using Akka.Actor;
 using SimEngine.Contracts;
 using SimEngine.Game;
-using SimEngine.Server.Worlds;
+using SimEngine.Game.Worlds;
 using Xunit;
 
 namespace SimEngine.Server.Tests;

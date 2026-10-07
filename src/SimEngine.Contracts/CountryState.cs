@@ -15,4 +15,7 @@ public sealed record CountryState
 
     /// <summary>Treasury balance in fixed-point (divide by 100 for display units).</summary>
     public long FundsE2 { get; init; }
+
+    /// <summary>Number of provinces the country owns.</summary>
+    public int ProvinceCount { get; init; }
 }

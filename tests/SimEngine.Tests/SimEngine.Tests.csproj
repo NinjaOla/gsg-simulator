@@ -28,7 +28,7 @@
   <ItemGroup>
     <!-- Source assets now live under <repo>/data. They are copied to two output
          shapes: TestAssets\ (used by unit-test path constants) and Worlds\
-         (resolved by WorldCatalog for the in-process silo integration tests). -->
+         (resolved by WorldCatalog for the local server integration tests). -->
     <Content Include="..\..\data\custom-test\grid4.geojson">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>TestAssets\grid4.geojson</Link>
@@ -43,4 +43,3 @@
     </Content>
   </ItemGroup>
 </Project>
-

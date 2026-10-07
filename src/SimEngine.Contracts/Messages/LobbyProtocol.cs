@@ -12,6 +12,12 @@ public static class LobbyProtocol
     /// </summary>
     public sealed record CreateGame(CreateGameRequest Request);
 
+    /// <summary>
+    /// Creates a game from a save file on the server and registers it.
+    /// Reply: <see cref="GameListing"/>, or <c>Status.Failure</c> on error.
+    /// </summary>
+    public sealed record CreateGameFromSave(string Name, string SavePath);
+
     /// <summary>Lists games created through this lobby. Reply: <see cref="GameListing"/><c>[]</c>.</summary>
     public sealed record ListGames;
 
